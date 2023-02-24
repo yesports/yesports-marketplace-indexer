@@ -1,0 +1,16 @@
+{
+    "name": "yesports-marketplace-indexer",
+    "version": "1.0.0",
+    "description": "Yesports Marketplace GraphQL",
+    "main": "indexer.js",
+    "dependencies": {
+      "http": "0.0.1-security",
+      "pg-promise": "^10.11.1",
+      "postgraphile": "^4.12.6",
+      "postgraphile-plugin-connection-filter": "^2.2.2",
+      "web3": "^1.6.1",
+      "fs": "^0.0.1-security",
+      "node-fetch": "2"
+    }
+  }
+  
