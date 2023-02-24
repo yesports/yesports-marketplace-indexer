@@ -4,12 +4,12 @@ const fs = require("fs").promises;
 const http = require("http");
 const { postgraphile } = require("postgraphile");
 const pgp = require("pg-promise")({});
-const cn = 'postgres://postgres:<DBPASS>@<DBHOST>:5432/<DBNAME>';
+const cn = 'postgres://postgres:<DBPASS>@<DBHOST>:5432/<DBNAME>?ssl=true';
 const db = pgp(cn);
 const ABIS = require("./utils/abis.js");
 const CHAIN_NAME = "polygon";
 const CHAINS = require("./utils/chains.js");
-const chainObject = CHAINS[CHAIN_NAME];
+const chainObject = CHAINS.CHAINS[CHAIN_NAME];
 
 const blockBatch = 500;
 
@@ -83,7 +83,7 @@ startListening();
 
 async function startListening() {
     startListeningMarketplace();
-    startListeningFungibleMarketplace();
+    // startListeningFungibleMarketplace();
     // startListeningHolders();
 }
 
@@ -190,7 +190,7 @@ async function handleTokenListed(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("event_id", "user_address", "activity", "chain_name", "token_address", "token_id", "amount", "time_stamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
             [event_id, tx['from'], "TOKEN_LISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], price.toString(), block['timestamp']]
         ); 
     } catch (e) { console.log(e); }
@@ -211,8 +211,8 @@ async function handleTokenListed(row) {
     // SAVE OR UPDATE TOKEN
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) {
-        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "heighestBid") VALUES ($1, $2, $3, $4, $5, $6)', 
-            [id, row['returnValues']['id'], row['returnValues']['token'], price.toString(), 0, 0]
+        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "heighestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            [id, row['returnValues']['id'], row['returnValues']['token'], price.toString(), 0, 0, CHAIN_NAME]
         );
         token = {
             'id': id,
@@ -260,7 +260,7 @@ async function handleTokenDelisted(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("event_id", "user_address", "activity", "chain_name", "token_address", "token_id", "amount", "time_stamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
             [event_id, tx['from'], "TOKEN_DELISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], 0, block['timestamp']]
         ); 
     } catch (e) { console.log(e); }
@@ -306,7 +306,7 @@ async function handleTokenPurchased(row) {
 
         // For user activity panel
         if (trackActivity) try { 
-            await db.any('INSERT INTO "activityHistories" ("event_id", "user_address", "activity", "chain_name", "token_address", "token_id", "amount", "time_stamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+            await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
                 [event_id, tx['from'], "OFFER_ACCEPTED", CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
             ); 
         } catch (e) { console.log(e); }
@@ -347,7 +347,7 @@ async function handleTokenPurchased(row) {
 
         // For user activity panel
         if (trackActivity) try { 
-            await db.any('INSERT INTO "activityHistories" ("event_id", "user_address", "activity", "chain_name", "token_address", "token_id", "amount", "time_stamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+            await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
                 [event_id, tx['from'], "TOKEN_PURCHASED", CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
             ); 
         } catch (e) { console.log(e); }
@@ -419,7 +419,7 @@ async function handledBidPlaced(row) {
     // SAVE OR UPDATE TOKEN
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) {
-        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "heighestBid") VALUES ($1, $2, $3, $4, $5, $6)', [id, row['returnValues']['id'], row['returnValues']['token'], price.toString(), 0, 0]);
+        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "heighestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', [id, row['returnValues']['id'], row['returnValues']['token'], price.toString(), 0, 0, CHAIN_NAME]);
         token = {
             'id': id,
             'tokenNumber': row['returnValues']['id'],
@@ -442,7 +442,7 @@ async function handledBidPlaced(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("event_id", "user_address", "activity", "chain_name", "token_address", "token_id", "amount", "time_stamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
             [event_id, tx['from'], "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
         ); 
     } catch (e) { console.log(e); }

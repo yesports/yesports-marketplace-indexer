@@ -3,7 +3,7 @@ const fs = require("fs").promises;
 const http = require("http");
 const { postgraphile } = require("postgraphile");
 const pgp = require("pg-promise")({});
-const cn = 'postgres://postgres:<DBPASS>@<DBHOST>:5432/<DBNAME>';
+const cn = 'postgres://postgres:<DBPASS>@<DBHOST>:5432/<DBNAME>?ssl=true';
 const db = pgp(cn);
 
 //Health Check & Convenience Endpoints

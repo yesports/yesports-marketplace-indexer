@@ -18,7 +18,8 @@ sed -i 's/<DBHOST>/xxxxx/' ./cleanup/listingCleanup.sh
 sed -i 's/<DBNAME>/xxxxx/' ./cleanup/listingCleanup.sh
 npm i
 (crontab -l 2>/dev/null; echo "0 * * * * /home/ec2-user/yesports-marketplace-indexer/get_collections.sh") | crontab -
-npm install pm2
+npm install -g pm2
+npm config set strict-ssl=false
 pm2 install pm2-logrotate
 pm2 set pm2-logrotate:max_size 50M
 pm2 set pm2-logrotate:retain 10
