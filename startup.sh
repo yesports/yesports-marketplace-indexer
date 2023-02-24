@@ -20,6 +20,7 @@ npm i
 (crontab -l 2>/dev/null; echo "0 * * * * /home/ec2-user/yesports-marketplace-indexer/get_collections.sh") | crontab -
 npm install -g pm2
 npm config set strict-ssl=false
+export NODE_TLS_REJECT_UNAUTHORIZED='0'
 pm2 install pm2-logrotate
 pm2 set pm2-logrotate:max_size 50M
 pm2 set pm2-logrotate:retain 10

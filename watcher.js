@@ -34,7 +34,7 @@ http.createServer(
         cn,
         "public",
         {
-            watchPg: true,
+            watchPg: false,
             graphiql: true,
             enhanceGraphiql: true,
             appendPlugins: [ConnectionFilterPlugin],
