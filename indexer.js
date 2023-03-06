@@ -320,7 +320,7 @@ async function handleTokenPurchased(row) {
         let bid = await db.oneOrNone('SELECT * FROM "bids" WHERE "tokenId" = $1 AND "buyer" = $2 AND "value" = $3 AND "offerHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', [id, row['returnValues']['newOwner'], web3.utils.toBN(row['returnValues']['price']).toString(), row['returnValues']['tradeHash']]);
         if (bid !== null) {
             // SAVE FILL
-            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)', [fillId, row['returnValues']['collection'], row['returnValues']['id'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'bid', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner']]);
+            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', [fillId, row['returnValues']['collection'], row['returnValues']['id'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'bid', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner'], row['transactionHash']]);
 
             // REMOVE BID
             await db.any('DELETE FROM "bids" WHERE "id" = $1', [bid['id']]);
@@ -370,7 +370,7 @@ async function handleTokenPurchased(row) {
             await db.any('UPDATE "tokens" SET "currentAsk" = $1 WHERE "id" = $2', [0, id]);
 
             // SAVE FILL
-            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)', [fillId, row['returnValues']['collection'], row['returnValues']['tokenId'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'ask', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner']]);
+            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', [fillId, row['returnValues']['collection'], row['returnValues']['tokenId'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'ask', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner'], row['transactionHash']]);
 
             // UPDATE OLD ASK HISTORY
             await db.any('UPDATE "askHistories" SET "accepted" = $1 WHERE "id" = $2', [1, askHistoryId]);

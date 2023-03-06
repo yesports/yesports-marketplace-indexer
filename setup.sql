@@ -64,7 +64,7 @@ ALTER TABLE public.bids OWNER TO postgres;
 CREATE TABLE public.collections (id text NOT NULL, "volumeOverall" numeric DEFAULT 0, "floorPrice" numeric DEFAULT 0, "ceilingPrice" numeric DEFAULT 0, "chainName" text, "royalty" numeric DEFAULT 0, "tradingEnabled" boolean DEFAULT FALSE, "collectionOwner" text, "timestamp" numeric DEFAULT 0 NOT NULL, "lastModifiedTxHash" text);
 ALTER TABLE public.collections OWNER TO postgres;
 
-CREATE TABLE public.fills (id text NOT NULL, "collectionId" text NOT NULL, "tokenNumber" numeric NOT NULL, "tokenId" text NOT NULL, value numeric NOT NULL, "timestamp" numeric NOT NULL, buyer text NOT NULL, type text NOT NULL, "chainName" text, "tradeHash" text, "seller" text);
+CREATE TABLE public.fills (id text NOT NULL, "collectionId" text NOT NULL, "tokenNumber" numeric NOT NULL, "tokenId" text NOT NULL, value numeric NOT NULL, "timestamp" numeric NOT NULL, buyer text NOT NULL, type text NOT NULL, "chainName" text, "tradeHash" text, "seller" text, "transactionHash", text);
 ALTER TABLE public.fills OWNER TO postgres;
 
 CREATE TABLE public.holders (id text NOT NULL, "collectionId" text NOT NULL, "tokenNumber" numeric NOT NULL, "currentOwner" text NOT NULL, "lastTransfer" numeric NOT NULL, "chainName" text);
