@@ -499,12 +499,13 @@ async function handleCollectionModified(row) {
 
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
     if (collection === null) {
-        console.log(`Adding new collection to database: ${row['returnValues']['token']}.`);
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTxHash") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
-            [CA, 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash']]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTxHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+            [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash']]);
+            console.log(`Added new collection to database: ${row['returnValues']['token']}.`);
     } else {
         await db.any('UPDATE "collections" SET "tradingEnabled" = $1, "royalty" = $2, "collectionOwner" = $3, "timestamp" = $4, "lastModifiedTxHash" = $5 WHERE "id" = $6',
             [row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], rpw['returnValues']['timestamp'], row['transactionHash'], row['returnValues']['token']]);
+            console.log(`Collection updated: ${row['returnValues']['token']}. (${row['returnValues']['enabled'] ? "TRADING" : "NOT TRADING"} | FEE: ${web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString()} | Collection owner ${row['returnValues']['owner']})`);
     }
 
 }
