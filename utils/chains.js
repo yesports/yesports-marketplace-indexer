@@ -3,8 +3,8 @@ const CHAINS = {
         "chain_name": "Polygon",
         "chain_id": 137,
         "rpc": "wss://polygon-mainnet.g.alchemy.com/v2/M8n-tFUkbCemboXyAZbHbTURRTLIKBia",
-        "marketplace_contract_address": "0xf0f14e213dbA257CedBa3b46f7c485AE87798424",
-        "fungible_marketplace_contract_address": "0xC405f650b3DD93670401808E127dc7eDfA74a57B",
+        "marketplace_contract_address": "0x80D385e56cBF3C1cA27A511A7Eb63a77Dc681484",
+        "fungible_marketplace_contract_address": "0x39a51f7b3166Ea8E94c6FC1D317e24366F9c33A4",
         "testnet": false
     },
     "mumbai": {
