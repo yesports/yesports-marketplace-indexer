@@ -83,8 +83,6 @@ startListening();
 
 async function startListening() {
     startListeningMarketplace();
-    // startListeningFungibleMarketplace();
-    // startListeningHolders();
 }
 
 
@@ -96,7 +94,7 @@ async function startListeningMarketplace() {
     let startBlock = parseInt(await fs.readFile("last_block_polygon.txt"));
 
     if (startBlock == 0) {
-        startBlock = 38760423;
+        startBlock = 40022970;
     }
 
     let lastBlock = await web3.eth.getBlockNumber();
@@ -116,9 +114,10 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
             console.log('Start:', startBlock, 'End:', endBlock, 'Last:', lastBlock);
 
             let events = await marketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
+            let fungiEvents = await fungibleMarketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock});
 
-            let sortedEvents = events.reverse().sort(function (x, y) {
-                return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex;
+            let sortedEvents = events.reverse().concat(fungiEvents.reverse()).sort(function (x, y) {
+                return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex || x.transactionHash - y.transactionHash;
             });
 
             for (let row of sortedEvents) {
@@ -154,6 +153,15 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
                     row['timestamp'] = row['returnValues']['timestamp'];
                 } else if (row.event == "CollectionModified") {
                     await handleCollectionModified(row);
+                    row['timestamp'] = row['returnValues']['timestamp'];
+                } else if (row.event == "TradeOpened") {
+                    await handleTradeOpened(row);
+                    row['timestamp'] = row['returnValues']['timestamp'];
+                } else if (row.event == "TradeAccepted") {
+                    await handleTradeAccepted(row);
+                    row['timestamp'] = row['returnValues']['timestamp'];
+                } else if (row.event == "TradeCancelled") {
+                    await handleTradeCancelled(row);
                     row['timestamp'] = row['returnValues']['timestamp'];
                 } else {
                     transactionHandled = false;
@@ -193,16 +201,14 @@ async function handleTokenListed(row) {
     let event_id = `${tx['from']}-TOKENLISTING-${block['timestamp']}-${row['transactionHash']}`;
 
     // For user activity panel
-    if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-            [event_id, tx['from'], "TOKEN_LISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], price.toString(), block['timestamp']]
-        ); 
+    if (trackActivity) try {
+        await handleListingTracking(event_id, tx, row, price, block);
     } catch (e) { console.log(e); }
 
     // CREATE OR GET COLLECTION
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', CA);
     if (collection === null) {
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled") VALUES ($1, $2, $3, $4, $5, $6)', [CA, 0, 0, 0, CHAIN_NAME, true]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', [CA, 0, 0, 0, CHAIN_NAME, true, false]);
         collection = {
             'id': CA,
             'ceilingPrice': 0,
@@ -265,9 +271,7 @@ async function handleTokenDelisted(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-            [event_id, tx['from'], "TOKEN_DELISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], 0, block['timestamp']]
-        ); 
+        await handleDelistingTracking(event_id, tx, row, block);
     } catch (e) { console.log(e); }
 
     // UDPDATE TOKEN
@@ -303,17 +307,17 @@ async function handleTokenPurchased(row) {
     let block = await web3.eth.getBlock(row['blockNumber']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
     row['timestamp'] = block['timestamp'];
-    let event_id = `${tx['from']}-TOKENPURCHASED-${block['timestamp']}-${row['transactionHash']}`;
+    const isAcceptedOffer = methodSignatures[tx.input.slice(2, 10)] == "acceptOffer";
 
-    if (methodSignatures[tx.input.slice(2, 10)] == "acceptOffer") {
+    let event_id = `${row['returnValues']['newOwner']}-PURCHASEDTOKENFROM-${row['returnValues']['oldOwner']}-${block['timestamp']}-${row['transactionHash']}`;
+
+    if (isAcceptedOffer) {
         const id = `${row['returnValues']['collection']}-${row['returnValues']['id']}`;
         const fillId = `${row['returnValues']['collection']}-${row['returnValues']['id']}-${row['transactionHash']}`;
 
         // For user activity panel
         if (trackActivity) try { 
-            await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-                [event_id, tx['from'], "OFFER_ACCEPTED", CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
-            ); 
+            await handlePurchaseTracking(event_id, tx, row, block, true);
         } catch (e) { console.log(e); }
 
         // REMOVE CURRENT BID
@@ -346,22 +350,20 @@ async function handleTokenPurchased(row) {
         } else {
             console.log("Bid not in database");
         }
-    } else {
+    } else { // Listing fulfilled
         const id = `${row['returnValues']['collection']}-${row['returnValues']['tokenId']}`;
         const fillId = `${row['returnValues']['collection']}-${row['returnValues']['tokenId']}-${row['transactionHash']}`;
 
         // For user activity panel
         if (trackActivity) try { 
-            await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-                [event_id, tx['from'], "TOKEN_PURCHASED", CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
-            ); 
+            await handlePurchaseTracking(event_id, tx, row, block, false);
         } catch (e) { console.log(e); }
 
         let filledAsk = await db.oneOrNone('SELECT * FROM "askHistories" WHERE "tokenId" = $1 AND "value" = $2 AND "accepted" = $3 AND "listingHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', [id, web3.utils.toBN(row['returnValues']['price']).toString(), 0, row['returnValues']['tradeHash']]);
         if (filledAsk !== null) {
             const askHistoryId = filledAsk['id'];
 
-            // UDPDATE TOKEN
+            // UPDATE TOKEN
             let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
             if (token === null) {
                 console.log("Token not in database");
@@ -411,7 +413,7 @@ async function handledBidPlaced(row) {
     // CREATE OR GET COLLECTION
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
     if (collection === null) {
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled") VALUES ($1, $2, $3, $4, $5, $6)', [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, true]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, true, false]);
         collection = {
             'id': row['returnValues']['token'],
             'ceilingPrice': 0,
@@ -448,9 +450,7 @@ async function handledBidPlaced(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-            [event_id, tx['from'], "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
-        ); 
+        await handleOfferTracking(event_id, row, block, tx);
     } catch (e) { console.log(e); }
 
     // SAVE BID
@@ -480,9 +480,7 @@ async function handleBidCancelled(row) {
 
         // For user activity panel
         if (trackActivity) try { 
-            await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
-                [event_id, tx['from'], "OFFER_CANCELLED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp']]
-            ); 
+            await handleOfferCancelTracking(id, row, block, tx)
         } catch (e) { console.log(e); }
 
         let [lowestBid, highestBid] = await getTokenPrices(id);
@@ -497,10 +495,12 @@ async function handleBidCancelled(row) {
 // NEW COLLECTION ADDED / ROYALTY INFO MODIFIED
 async function handleCollectionModified(row) {
 
+    const isERC1155 = row['address'] === chainObject.fungible_marketplace_contract_address;
+
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
     if (collection === null) {
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTxHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-            [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash']]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTxHash", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)', 
+            [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash'], isERC1155]);
             console.log(`Added new collection to database: ${row['returnValues']['token']}.`);
     } else {
         await db.any('UPDATE "collections" SET "tradingEnabled" = $1, "royalty" = $2, "collectionOwner" = $3, "timestamp" = $4, "lastModifiedTxHash" = $5 WHERE "id" = $6',
@@ -530,57 +530,210 @@ async function handleTransaction(row) {
     }
 
 }
-
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              m
 
 /*****************
-      HOLDERS
+      1155's
 ******************/
 
-// async function startListeningHolders() {
-//     lastBlock = await web3.eth.getBlockNumber();
-//     let collections = JSON.parse(await fs.readFile('./utils/collections.json'));
+async function handleTradeOpened(row) {
+    const id = `${row['returnValues']['tradeId']}`;
+    const tokenId = `${row['returnValues']['token']}-${row['returnValues']['tokenId']}`;
+    const price = web3.utils.toBN(row['returnValues']['price']);
+    const quantity = web3.utils.toBN(row['returnValues']['quantity']);
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['tokenId'];
+    const maker = row['returnValues']['maker'];
+    const tradeFlags = row['returnValues']['tradeFlags'];
+    const tradeType = tradeFlags?.[0] === 0 ? 'BUY' : 'SELL';
+    const allowPartialFills = tradeFlags?.[1];
+    const isEscrowed = tradeFlags?.[2];
+    const expiration = web3.utils.toBN(row['returnValues']['expiry']);
+    let block = await web3.eth.getBlock(row['blockNumber']);
+    let tx = await web3.eth.getTransaction(row['transactionHash']);
+    let event_id = `${tx['from']}-TRADEOPENED-${row['timestamp']}-${row['transactionHash']}`;
 
-//     for (let key in collections) {
-//         let startBlockQuery = await db.oneOrNone('SELECT "value" FROM "meta" WHERE "name" = $1', ['last_block_' + key]);
-//         let startBlock = collections[key]?.startBlock ?? 0;
-//         if (startBlockQuery === null) {
-//             await db.any('INSERT INTO "meta" ("name", "value", "timestamp") VALUES ($1, $2, $3)', ['last_block_' + key, startBlock, Math.floor(Date.now() / 1000)]);
-//         } else {
-//             startBlock = parseInt(startBlockQuery['value']);
-//         }
+    // For user activity panel
+    if (trackActivity) try { 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+            [event_id, tx['from'], "TRADE_OPENED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], id, row['transactionHash']]
+        ); 
 
-//         let endBlock = startBlock + blockBatch;
-//         if (endBlock > lastBlock) {
-//             endBlock = lastBlock;
-//         }
+        //TODO - logic for 1155 trade tracking/scoring
+    } catch (e) { console.log(e); }
 
-//         handleCollectionTransfers(key, startBlock, endBlock, collections);
-//     }
-// }
+    // CREATE OR GET COLLECTION
+    let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', CA);
+    if (collection === null) {
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', [CA, 0, 0, 0, CHAIN_NAME, true, true]);
+    }
 
-// async function handleCollectionTransfers(key, startBlock, endBlock, collections) {
-//     let collection = collections[key];
-//     if (collection['chain'] !== 'polygon') return;
-//     try {
-//         while (true) {
-//             console.log('Getting Transfer events for ' + collection['title'] + ' (' + collection['contractAddress'] + ') ' + startBlock + '/' + endBlock);
+    // SAVE OR UPDATE TOKEN
+    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
+    if (token === null) { // new token
+        if (tradeType === "SELL") {
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+                [tokenId, tokenNumber, CA, price.toString(), 0, CHAIN_NAME]);
+        } else {
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+                [tokenId, tokenNumber, CA, 0, price.toString(), CHAIN_NAME]);
+        }
+    } else {
+        if (tradeType === "SELL" && price.lte(web3.utils.toBN(token?.['currentAsk']))) {
+            await db.any('UPDATE "tokens" SET "currentAsk" = $1 WHERE "id" = $2', [price.toString(), tokenId]);
+        } else if (tradeType === "BUY" && price.gte(web3.utils.toBN(token?.['highestBid']))) {
+            await db.any('UPDATE "tokens" SET "highestBid" = $1 WHERE "id" = $2', [price.toString(), tokenId]);
+        }
+    }
 
-//             if (collection['isERC1155']) {
-//                 await handleTransfer1155(key, startBlock, endBlock, collection);
-//             } else { //ERC721
-//                 await handleTransfer721(key, startBlock, endBlock, collection);
-//             }
-//         }
-//     } catch (e) {
-//         console.log(e);
-//         handleCollectionTransfers(key, startBlock, endBlock, collections);
-//     }
-// }
+    // UPDATE COLLECTION FLOOR/CEILINGS
+    if (tradeType === "SELL" && web3.utils.toBN(collection['ceilingPrice']).lte(price)) {
+        await db.any('UPDATE "collections" SET "ceilingPrice" = $1 WHERE "id" = $2', [price.toString(), CA]);
+    }
+
+    if (tradeType === "SELL" && web3.utils.toBN(collection['floorPrice']).gte(price)) {
+        await db.any('UPDATE "collections" SET "floorPrice" = $1 WHERE "id" = $2', [price.toString(), CA]);
+    }
+
+    // SAVE NEW TRADE
+    await db.any('DELETE FROM "fungibleTrades" WHERE "id" = $1', [id]);
+    await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)', 
+        [id, CA, tokenNumber, 'OPEN', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), row['timestamp'], row['timestamp'], CHAIN_NAME, maker, expiration.toString()]);
+
+    console.log(`[1155 TRADE OPENED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}; quantity: ${quantity}`);
+}
 
 
+async function handleTradeCancelled(row) {
+    const id = `${row['returnValues']['tradeId']}`;
+    const price = web3.utils.toBN(row['returnValues']['price']);
+    const quantity = web3.utils.toBN(row['returnValues']['quantity']);
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['tokenId'];
+    const tokenId = `${CA}-${tokenNumber}`;
+    const maker = row['returnValues']['maker'];
+    const tradeFlags = row['returnValues']['tradeFlags'];
+    const tradeType = tradeFlags?.[0] === 0 ? 'BUY' : 'SELL';
+    const allowPartialFills = tradeFlags?.[1];
+    const isEscrowed = tradeFlags?.[2];
+    const expiration = web3.utils.toBN(row['returnValues']['expiry']);
+    let tx = await web3.eth.getTransaction(row['transactionHash']);
+    let event_id = `${tx['from']}-TRADECANCELLED-${row['timestamp']}-${row['transactionHash']}`;
+
+    // For user activity panel
+    if (trackActivity) try { 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+            [event_id, tx['from'], "TRADE_CANCELLED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], maker, id, row['transactionHash']]
+        ); 
+
+        //TODO - logic for 1155 trade tracking/scoring
+    } catch (e) { console.log(e); }
+
+    // CREATE OR GET COLLECTION
+    let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', CA);
+    if (collection === null) { // new collection - should be impossible
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', [CA, 0, 0, 0, CHAIN_NAME, true, true]);
+    }
+
+    // SAVE TRADE CANCELLATION
+    const trade = await db.oneOrNone('SELECT * FROM "fungibleTrades" where "id" = $1', [id]);
+    if (trade === null) { //should be impossible
+        await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)', 
+        [id, CA, tokenNumber, 'CANCELLED', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), row['timestamp'], row['timestamp'], CHAIN_NAME, maker, expiration.toString()]);
+    } else {
+        await db.any('UPDATE "fungibleTrades" SET "status" = $1, "lastUpdatedTimestamp" = $2 WHERE "id" = $3', ['CANCELLED', row['timestamp'], id]);
+    }
+
+    // SAVE OR UPDATE TOKEN
+    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
+    if (token === null) { // new token - should be impossible
+        if (tradeType === "SELL") {
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+                [tokenId, tokenNumber, CA, 0, 0, CHAIN_NAME]);
+        } else {
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+                [tokenId, tokenNumber, CA, 0, 0, CHAIN_NAME]);
+        }
+    } else {
+        const [highestBid, lowestAsk] = getFungibleTokenPrices(CA, tokenNumber);
+        await db.any('UPDATE "tokens" SET "currentAsk" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestAsk, highestBid, tokenId]);
+    }
+    
+    // UPDATE COLLECTION FLOOR/CEILINGS
+    const [floorPrice, ceilingPrice] = getFungibleCollectionPrices(CA);
+    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
+
+    console.log(`[1155 TRADE CANCELLED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}; quantity: ${quantity}`);
+
+}
 
 
+async function handleTradeAccepted(row) {
+    const id = `${row['returnValues']['tradeId']}`;
+    const fillId = `${row['returnValues']['tradeId']}-${row['returnValues']['transactionHash']}`;
+    const price = web3.utils.toBN(row['returnValues']['price']);
+    const quantity = web3.utils.toBN(row['returnValues']['quantity']);
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['tokenId'];
+    const tokenId = `${CA}-${tokenNumber}`;
+    const tradeType = row['returnValues']['tradeType'] === 0 ? 'BUY' : 'SELL';
+    const expiration = web3.utils.toBN(row['returnValues']['expiry']);
+    let tx = await web3.eth.getTransaction(row['transactionHash']);
+    const buyer = row['returnValues']['newOwner'];
+    const seller = row['returnValues']['oldOwner'];
+    let event_id = `${tx['from']}-TRADEACCEPTED-${row['timestamp']}-${row['transactionHash']}`;
 
+    // For user activity panel
+    if (trackActivity) try { 
+        await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+            [event_id, tx['from'], "TRADE_ACCEPTED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], id, row['transactionHash']]
+        ); 
+
+        //TODO - logic for 1155 trade tracking/scoring
+    } catch (e) { console.log(e); }
+
+    try { // wrapping all this just in case 
+        let trade = await db.any('SELECT * FROM "fungibleTrades" WHERE "tradeHash" = $1', [id]);
+        if (trade === null) {
+            console.log(`Trade [${id}] not in database`);
+        } else {
+            //First, update the fungible trade table with the new status
+            const remainingQuantity = web3.utils.toBN(trade?.['remainingQuantity']).sub(quantity);
+            const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? "PARTIAL" : "ACCEPTED";
+            await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, row['timestamp'], id]);
+
+            //Now update the regular fills table with the the amount sold
+            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash", "isERC1155", "quantity") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)', 
+                [fillId, CA, tokenNumber, tokenId, price.toString(), row['timestamp'], buyer, tradeType, CHAIN_NAME, id, seller, row['transactionHash'], true, quantity.toString()]);
+
+            //We only need to update price info if the trade is now closed / accepted.
+            if (newStatus === "ACCEPTED") {
+
+                // Get and update token price data
+                let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [tokenId]);
+                if (token === null) {
+                    console.log("Token not in database");
+                } else {
+                    const [highestBid, lowestAsk] = getFungibleTokenPrices(CA, tokenNumber);
+                    await db.any('UPDATE "tokens" SET "currentAsk" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestAsk, highestBid, tokenId]);
+                }
+
+                // Get and update collection price data
+                let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [CA]);
+                if (collection === null) {
+                    console.log("Collection not in database");
+                } else {
+                    const [floorPrice, ceilingPrice] = getFungibleCollectionPrices(CA);
+                    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
+                }
+            }
+
+        }
+    } catch (e) {
+        console.log("Error occurred updating/accepting an open trade.", e);
+    }
+
+}
 
 
 
@@ -654,109 +807,153 @@ async function getCollectionPrices(collectionId) {
     return [floorPrice.toString(), ceilingPrice.toString()];
 }
 
+async function getFungibleTokenPrices(CA, tokenId) {
+    let highestBid = null;
+    let lowestAsk = null;
 
-// async function handleTransfer721(key, startBlock, endBlock, collection) {
-//     let contract = new web3.eth.Contract(ABIS.NFT, collection['contractAddress']);
+    let trades = await db.manyOrNone('SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND "tokenNumber" = $2 AND ("status" = "OPEN" OR "status" = "PARTIAL")', [CA, tokenId]);
+    if (trades.length > 0) {
+        for (let trade of trades) {
+            if (trade['tradeType'] === "BUY" && (highestBid === null || (web3.utils.toBN(trade['pricePerUnit'])).gte(web3.utils.toBN(highestBid)))) {
+                highestBid = web3.utils.toBN(trade['pricePerUnit']);
+            }
+            if (trade['tradeType'] === "SELL" && (lowestAsk === null || (web3.utils.toBN(trade['pricePerUnit'])).lte(web3.utils.toBN(lowestAsk)))) {
+                lowestAsk = web3.utils.toBN(trade['pricePerUnit']);
+            }
+        }
+    }
 
-//     let events = await contract.getPastEvents("Transfer", { 'fromBlock': startBlock, 'toBlock': endBlock });
+    if (highestBid === null) {
+        highestBid = web3.utils.toBN(0);
+    }
+    if (lowestAsk === null) {
+        lowestAsk = web3.utils.toBN(0);
+    }
 
-//     let sortedEvents = events.reverse().sort(function (x, y) {
-//         return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex;
-//     });
+    return [highestBid.toString(), lowestAsk.toString()];
+}
 
-//     for (let row of sortedEvents) {
-//         if (row.removed) {
-//             continue;
-//         }
+async function getFungibleCollectionPrices(collectionId) {
+    let floorPrice = null;
+    let ceilingPrice = null;
 
-//         if (row['blockNumber'] in blockTimestamps) {
-//             row['timestamp'] = blockTimestamps[row['blockNumber']]
-//         } else {
-//             let block = await web3.eth.getBlock(row['blockNumber']);
-//             row['timestamp'] = block['timestamp'];
-//             blockTimestamps[row['blockNumber']] = block['timestamp'];
-//         }
+    let trades = await db.manyOrNone('SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND ("status" = "OPEN" OR "status" = "PARTIAL") AND "tradeType" = "SELL"', [collectionId]);
+    if (trades.length > 0) {
+        for (let trade of trades) {
+            if (floorPrice === null || (web3.utils.toBN(trade['pricePerUnit'])).lte(web3.utils.toBN(floorPrice))) {
+                floorPrice = web3.utils.toBN(trade['pricePerUnit']);
+            }
+            if (ceilingPrice === null || (web3.utils.toBN(trade['pricePerUnit'])).gte(web3.utils.toBN(ceilingPrice))) {
+                ceilingPrice = web3.utils.toBN(trade['pricePerUnit']);
+            }
+        }
+    }
 
-//         let id = collection['contractAddress'] + '-' + row['returnValues']['2'];
+    if (floorPrice === null) {
+        floorPrice = web3.utils.toBN(0);
+    }
+    if (ceilingPrice === null) {
+        ceilingPrice = web3.utils.toBN(0);
+    }
 
-//         let token = await db.oneOrNone('SELECT * FROM "holders" WHERE "id" = $1', [id]);
-//         if (token === null) {
-//             await db.any('INSERT INTO "holders" ("id", "tokenNumber", "collectionId", "currentOwner", "lastTransfer", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', [id, row['returnValues']['2'], collection['contractAddress'], row['returnValues']['1'], row['timestamp'], CHAIN_NAME]);
-//         } else {
-//             await db.any('UPDATE "holders" SET "currentOwner" = $1, "lastTransfer" = $2 WHERE "id" = $3', [row['returnValues']['1'], row['timestamp'], id]);
-//         }
-//     }
+    return [floorPrice.toString(), ceilingPrice.toString()];
+}
 
-//     startBlock = endBlock;
-//     await db.any('UPDATE "meta" SET "value" = $1, "timestamp" = $2 WHERE "name" = $3', [startBlock, Math.floor(Date.now() / 1000), 'last_block_' + key]);
 
-//     if (startBlock >= lastBlock) {
-//         endBlock = await web3.eth.getBlockNumber();
-//         await sleep(120000);
-//     } else {
-//         endBlock += blockBatch;
-//         if (endBlock > lastBlock) {
-//             endBlock = lastBlock;
-//         }
-//         await sleep(800);
-//     }
-// }
+/*****************
+     TRACKING
+******************/
+async function handleListingTracking(event_id, tx, row, price, block) {
+    //regular tracking
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+        [event_id, tx['from'], "TOKEN_LISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], price.toString(), block['timestamp'], row['returnValues']['listingHash'], row['transactionHash']]
+    ); 
 
-//TODO
-// async function handleTransfer1155(key, startBlock, endBlock, collection) {
-//     let contract = new web3.eth.Contract(ABIS.NFT1155, collection['contractAddress']);
+    //score tracking
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    if (trader === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount") VALUES ($1, $2)`, [tx['from'], 1])
+    } else {
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1 WHERE "userAddress" = $2`, [trader?.['listingCount'] + 1, tx['from']]);
+    }
+}
 
-//     let singleTransfers = await contract.getPastEvents("TransferSingle", { 'fromBlock': startBlock, 'toBlock': endBlock });
-//     let batchTransfers = await contract.getPastEvents("TransferBatch", { 'fromBlock': startBlock, 'toBlock': endBlock });
 
-//     let transferTypes = {};
-//     singleTransfers.forEach((transferEvent) => {
-//         transferTypes[`${transferEvent.transactionHash}-${transferEvent.logIndex}`] = 'single';
-//     })
-//     batchTransfers.forEach((transferEvent) => {
-//         transferTypes[`${transferEvent.transactionHash}-${transferEvent.logIndex}`] = 'batch';
-//     })
+async function handleDelistingTracking(event_id, tx, row, block) {
+    //regular tracking
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+        [event_id, tx['from'], "TOKEN_DELISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], 0, block['timestamp'], row['returnValues']['listingHash'], row['transactionHash']]
+    ); 
 
-//     let events = singleTransfers.concat(batchTransfers);
+    //score tracking
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    if (trader === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount") VALUES ($1, $2)`, [tx['from'], 0])
+    } else {
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1 WHERE "userAddress" = $2`, [trader?.['listingCount'] - 1, tx['from']]);
+    }
+}
 
-//     let sortedEvents = events.reverse().sort(function (x, y) {
-//         return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex;
-//     });
 
-//     for (let row of sortedEvents) {
-//         if (row.removed) {
-//             continue;
-//         }
+async function handlePurchaseTracking(event_id, tx, row, block, isOffer) {
+    //track purchaser
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+        [event_id + '-buyer', row['returnValues']['newOwner'], isOffer ? 'TOKEN_PURCHASED_OFFER' : 'TOKEN_PURCHASED_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'], row['transactionHash']]
+    ); 
 
-//         if (row['blockNumber'] in blockTimestamps) {
-//             row['timestamp'] = blockTimestamps[row['blockNumber']]
-//         } else {
-//             let block = await web3.eth.getBlock(row['blockNumber']);
-//             row['timestamp'] = block['timestamp'];
-//             blockTimestamps[row['blockNumber']] = block['timestamp'];
-//         }
+    //track sale
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+        [event_id + '-seller', row['returnValues']['oldOwner'], isOffer ? 'TOKEN_SOLD_OFFER' : 'TOKEN_SOLD_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'], row['transactionHash']]
+    ); 
 
-//         let id = collection['contractAddress'] + '-' + row['returnValues']['2'];
+    //score tracking
+    let seller = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [row['returnValues']['oldOwner']]);
+    let purchaser = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [row['returnValues']['newOwner']]);
+    if (seller === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "saleCount", "saleVolume") VALUES ($1, $2, $3)`, [row['returnValues']['oldOwner'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
+    } else {
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [seller?.['saleCount'] + 1, web3.utils.toBN(seller?.['saleVolume']).add(web3.utils.toBN(row['returnValues']['price'])), row['returnValues']['oldOwner']]);
+    }
 
-//         let token = await db.oneOrNone('SELECT * FROM "holders" WHERE "id" = $1', [id]);
-//         if (token === null) {
-//             await db.any('INSERT INTO "holders" ("id", "tokenNumber", "collectionId", "currentOwner", "lastTransfer", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', [id, row['returnValues']['2'], collection['contractAddress'], row['returnValues']['1'], row['timestamp'], CHAIN_NAME]);
-//         } else {
-//             await db.any('UPDATE "holders" SET "currentOwner" = $1, "lastTransfer" = $2 WHERE "id" = $3', [row['returnValues']['1'], row['timestamp'], id]);
-//         }
-//     }
+    if (purchaser === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "purchaseCount", "purchaseVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
+    } else {
+        if (isOffer) {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2, "offerVolume" = $3 WHERE "userAddress" = $4`, [purchaser?.['purchaseCount'] + 1, web3.utils.toBN(purchaser?.['purchaseVolume']).add(web3.utils.toBN(row['returnValues']['price'])), web3.utils.toBN(purchaser?.['offerVolume']).sub(web3.utils.toBN(row['returnValues']['price'])), row['returnValues']['newOwner']]);
+        } else {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [purchaser?.['purchaseCount'] + 1, web3.utils.toBN(purchaser?.['purchaseVolume']).add(web3.utils.toBN(row['returnValues']['price'])), row['returnValues']['newOwner']]);
+        }
+    }
+}
 
-//     startBlock = endBlock;
-//     await db.any('UPDATE "meta" SET "value" = $1, "timestamp" = $2 WHERE "name" = $3', [startBlock, Math.floor(Date.now() / 1000), 'last_block_' + key]);
 
-//     if (startBlock >= lastBlock) {
-//         endBlock = await web3.eth.getBlockNumber();
-//         await sleep(120000);
-//     } else {
-//         endBlock += blockBatch;
-//         if (endBlock > lastBlock) {
-//             endBlock = lastBlock;
-//         }
-//         await sleep(800);
-//     }
-// }
+async function handleOfferTracking(event_id, row, block, tx) {
+    //regular tracking
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+        [event_id, tx['from'], "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'], row['transactionHash']]
+    ); 
+
+    //track score
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    if (trader === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
+    } else {
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [trader?.['offerCount'] + 1, web3.utils.toBN(trader?.['offerVolume']).add(web3.utils.toBN(row['returnValues']['price'])), tx['from']]);
+    }
+}
+
+
+async function handleOfferCancelTracking(id, row, block, tx) {
+    //regular tracking
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
+        [id, tx['from'], "OFFER_CANCELLED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'], row['transactionHash']]
+    ); 
+
+    //track score
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    if (trader === null) {
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
+    } else {
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [trader?.['offerCount'] - 1, web3.utils.toBN(trader?.['offerVolume']).sub(web3.utils.toBN(row['returnValues']['price'])), tx['from']]);
+    }
+}
