@@ -504,7 +504,7 @@ async function handleCollectionModified(row) {
             console.log(`Added new collection to database: ${row['returnValues']['token']}.`);
     } else {
         await db.any('UPDATE "collections" SET "tradingEnabled" = $1, "royalty" = $2, "collectionOwner" = $3, "timestamp" = $4, "lastModifiedTxHash" = $5 WHERE "id" = $6',
-            [row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], rpw['returnValues']['timestamp'], row['transactionHash'], row['returnValues']['token']]);
+            [row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash'], row['returnValues']['token']]);
             console.log(`Collection updated: ${row['returnValues']['token']}. (${row['returnValues']['enabled'] ? "TRADING" : "NOT TRADING"} | FEE: ${web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString()} | Collection owner ${row['returnValues']['owner']})`);
     }
 
@@ -931,7 +931,7 @@ async function handlePurchaseTracking(event_id, tx, row, block, isOffer) {
 
 async function handleOfferTracking(event_id, row, block, tx) {
     //regular tracking
-    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', 
+    await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
         [event_id, tx['from'], "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'], row['transactionHash']]
     ); 
 
