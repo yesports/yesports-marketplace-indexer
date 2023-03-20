@@ -596,7 +596,7 @@ async function handleTradeOpened(row) {
     }
 
     // SAVE NEW TRADE
-    await db.any('DELETE FROM "fungibleTrades" WHERE "id" = $1', [id]);
+    await db.any('DELETE FROM "fungibleTrades" WHERE "tradeHash" = $1', [id]);
     await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)', 
         [id, CA, tokenNumber, 'OPEN', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), timestamp, timestamp, CHAIN_NAME, maker, expiration.toString()]);
 
