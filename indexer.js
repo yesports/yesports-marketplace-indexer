@@ -572,10 +572,10 @@ async function handleTradeOpened(row) {
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) { // new token
         if (tradeType === "SELL") {
-            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
                 [tokenId, tokenNumber, CA, price.toString(), 0, CHAIN_NAME]);
         } else {
-            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
                 [tokenId, tokenNumber, CA, 0, price.toString(), CHAIN_NAME]);
         }
     } else {
@@ -649,10 +649,10 @@ async function handleTradeCancelled(row) {
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) { // new token - should be impossible
         if (tradeType === "SELL") {
-            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
                 [tokenId, tokenNumber, CA, 0, 0, CHAIN_NAME]);
         } else {
-            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
                 [tokenId, tokenNumber, CA, 0, 0, CHAIN_NAME]);
         }
     } else {
