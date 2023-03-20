@@ -548,14 +548,15 @@ async function handleTradeOpened(row) {
     const allowPartialFills = tradeFlags?.[1];
     const isEscrowed = tradeFlags?.[2];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
+    const timestamp = row['returnValues']['timestamp'];
     let block = await web3.eth.getBlock(row['blockNumber']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
-    let event_id = `${tx['from']}-TRADEOPENED-${row['timestamp']}-${row['transactionHash']}`;
+    let event_id = `${tx['from']}-TRADEOPENED-${timestamp}-${row['transactionHash']}`;
 
     // For user activity panel
     if (trackActivity) try { 
         await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-            [event_id, tx['from'], "TRADE_OPENED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], id, row['transactionHash']]
+            [event_id, tx['from'], "TRADE_OPENED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, id, row['transactionHash']]
         ); 
 
         //TODO - logic for 1155 trade tracking/scoring
@@ -597,7 +598,7 @@ async function handleTradeOpened(row) {
     // SAVE NEW TRADE
     await db.any('DELETE FROM "fungibleTrades" WHERE "id" = $1', [id]);
     await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)', 
-        [id, CA, tokenNumber, 'OPEN', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), row['timestamp'], row['timestamp'], CHAIN_NAME, maker, expiration.toString()]);
+        [id, CA, tokenNumber, 'OPEN', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), timestamp, timestamp, CHAIN_NAME, maker, expiration.toString()]);
 
     console.log(`[1155 TRADE OPENED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}; quantity: ${quantity}`);
 }
@@ -615,14 +616,15 @@ async function handleTradeCancelled(row) {
     const tradeType = tradeFlags?.[0] === 0 ? 'BUY' : 'SELL';
     const allowPartialFills = tradeFlags?.[1];
     const isEscrowed = tradeFlags?.[2];
+    const timestamp = row['returnValues']['timestamp'];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
-    let event_id = `${tx['from']}-TRADECANCELLED-${row['timestamp']}-${row['transactionHash']}`;
+    let event_id = `${tx['from']}-TRADECANCELLED-${timestamp}-${row['transactionHash']}`;
 
     // For user activity panel
     if (trackActivity) try { 
         await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-            [event_id, tx['from'], "TRADE_CANCELLED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], maker, id, row['transactionHash']]
+            [event_id, tx['from'], "TRADE_CANCELLED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, maker, id, row['transactionHash']]
         ); 
 
         //TODO - logic for 1155 trade tracking/scoring
@@ -638,9 +640,9 @@ async function handleTradeCancelled(row) {
     const trade = await db.oneOrNone('SELECT * FROM "fungibleTrades" where "id" = $1', [id]);
     if (trade === null) { //should be impossible
         await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)', 
-        [id, CA, tokenNumber, 'CANCELLED', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), row['timestamp'], row['timestamp'], CHAIN_NAME, maker, expiration.toString()]);
+        [id, CA, tokenNumber, 'CANCELLED', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), timestamp, timestamp, CHAIN_NAME, maker, expiration.toString()]);
     } else {
-        await db.any('UPDATE "fungibleTrades" SET "status" = $1, "lastUpdatedTimestamp" = $2 WHERE "id" = $3', ['CANCELLED', row['timestamp'], id]);
+        await db.any('UPDATE "fungibleTrades" SET "status" = $1, "lastUpdatedTimestamp" = $2 WHERE "id" = $3', ['CANCELLED', timestamp, id]);
     }
 
     // SAVE OR UPDATE TOKEN
@@ -676,16 +678,17 @@ async function handleTradeAccepted(row) {
     const tokenNumber = row['returnValues']['tokenId'];
     const tokenId = `${CA}-${tokenNumber}`;
     const tradeType = row['returnValues']['tradeType'] === 0 ? 'BUY' : 'SELL';
+    const timestamp = row['returnValues']['timestamp'];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
     const buyer = row['returnValues']['newOwner'];
     const seller = row['returnValues']['oldOwner'];
-    let event_id = `${tx['from']}-TRADEACCEPTED-${row['timestamp']}-${row['transactionHash']}`;
+    let event_id = `${tx['from']}-TRADEACCEPTED-${timestamp}-${row['transactionHash']}`;
 
     // For user activity panel
     if (trackActivity) try { 
         await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-            [event_id, tx['from'], "TRADE_ACCEPTED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), row['timestamp'], id, row['transactionHash']]
+            [event_id, tx['from'], "TRADE_ACCEPTED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, id, row['transactionHash']]
         ); 
 
         //TODO - logic for 1155 trade tracking/scoring
@@ -699,11 +702,11 @@ async function handleTradeAccepted(row) {
             //First, update the fungible trade table with the new status
             const remainingQuantity = web3.utils.toBN(trade?.['remainingQuantity']).sub(quantity);
             const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? "PARTIAL" : "ACCEPTED";
-            await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, row['timestamp'], id]);
+            await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, timestamp, id]);
 
             //Now update the regular fills table with the the amount sold
             await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash", "isERC1155", "quantity") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)', 
-                [fillId, CA, tokenNumber, tokenId, price.toString(), row['timestamp'], buyer, tradeType, CHAIN_NAME, id, seller, row['transactionHash'], true, quantity.toString()]);
+                [fillId, CA, tokenNumber, tokenId, price.toString(), timestamp, buyer, tradeType, CHAIN_NAME, id, seller, row['transactionHash'], true, quantity.toString()]);
 
             //We only need to update price info if the trade is now closed / accepted.
             if (newStatus === "ACCEPTED") {
