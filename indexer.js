@@ -579,7 +579,7 @@ async function handleTradeOpened(row) {
     }
 
     // SAVE OR UPDATE TOKEN
-    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
+    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [tokenId]);
     if (token === null) { // new token
         if (tradeType === "SELL") {
             await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
@@ -666,7 +666,7 @@ async function handleTradeCancelled(row) {
     }
 
     // SAVE OR UPDATE TOKEN
-    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
+    let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [tokenId]);
     if (token === null) { // new token - should be impossible
         if (tradeType === "SELL") {
             await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6)', 
