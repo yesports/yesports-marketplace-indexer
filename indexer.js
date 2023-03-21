@@ -566,9 +566,9 @@ async function handleTradeOpened(row) {
         } else if (trader === null && tradeType === "SELL") {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount", "listingVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, price.mul(quantity).toString()])
         } else if (trader !== null && tradeType === "BUY") {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume']).add(price.mul(quantity)).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).add(price.mul(quantity)).toString(), tx['from']]);
         } else if (trader !== null && tradeType === "SELL"){
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) + 1, web3.utils.toBN(trader?.['listingVolume']).add(price.mul(quantity)).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) + 1, web3.utils.toBN(trader?.['listingVolume'] ?? 0).add(price.mul(quantity)).toString(), tx['from']]);
         }
     } catch (e) { console.log(e); }
 
@@ -644,9 +644,9 @@ async function handleTradeCancelled(row) {
         } else if (trader === null && tradeType === "SELL") {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount", "listingVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
         } else if (trader !== null && tradeType === "BUY") {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume']).sub(price.mul(quantity)).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).sub(price.mul(quantity)).toString(), tx['from']]);
         } else if (trader !== null && tradeType === "SELL"){
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) - 1, web3.utils.toBN(trader?.['listingVolume']).sub(price.mul(quantity)).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) - 1, web3.utils.toBN(trader?.['listingVolume'] ?? 0).sub(price.mul(quantity)).toString(), tx['from']]);
         }
     } catch (e) { console.log(e); }
 
@@ -717,12 +717,12 @@ async function handleTradeAccepted(row) {
         if (traderBuyer === null) {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "purchaseCount", "purchaseVolume") VALUES ($1, $2, $3)`, [buyer, 1, price.mul(quantity).toString()]);
         } else {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["purchaseCount"] ?? 0) + 1, web3.utils.toBN(trade?.["purchaseVolume"]).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["purchaseCount"] ?? 0) + 1, web3.utils.toBN(trade?.["purchaseVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
         }
         if (traderSeller === null) {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "saleCount", "saleVolume") VALUES ($1, $2, $3)`, [seller, 1, price.mul(quantity).toString()]);
         } else {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["saleCount"] ?? 0) + 1, web3.utils.toBN(trade?.["saleVolume"]).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["saleCount"] ?? 0) + 1, web3.utils.toBN(trade?.["saleVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
         }
     } catch (e) { console.log(e); }
 
@@ -946,16 +946,16 @@ async function handlePurchaseTracking(event_id, tx, row, block, isOffer) {
     if (seller === null) {
         await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "saleCount", "saleVolume") VALUES ($1, $2, $3)`, [row['returnValues']['oldOwner'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
     } else {
-        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(seller?.['saleCount'] ?? 0) + 1, web3.utils.toBN(seller?.['saleVolume']).add(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['oldOwner']]);
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(seller?.['saleCount'] ?? 0) + 1, web3.utils.toBN(seller?.['saleVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['oldOwner']]);
     }
 
     if (purchaser === null) {
         await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "purchaseCount", "purchaseVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
     } else {
         if (isOffer) {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2, "offerVolume" = $3 WHERE "userAddress" = $4`, [Number(purchaser?.['purchaseCount'] ?? 0) + 1, web3.utils.toBN(purchaser?.['purchaseVolume']).add(web3.utils.toBN(row['returnValues']['price'])).toString(), web3.utils.toBN(purchaser?.['offerVolume']).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['newOwner']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2, "offerVolume" = $3 WHERE "userAddress" = $4`, [Number(purchaser?.['purchaseCount'] ?? 0) + 1, web3.utils.toBN(purchaser?.['purchaseVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), web3.utils.toBN(purchaser?.['offerVolume'] ?? 0).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['newOwner']]);
         } else {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(purchaser?.['purchaseCount'] ?? 0) + 1, web3.utils.toBN(purchaser?.['purchaseVolume']).add(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['newOwner']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(purchaser?.['purchaseCount'] ?? 0) + 1, web3.utils.toBN(purchaser?.['purchaseVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), row['returnValues']['newOwner']]);
         }
     }
 }
@@ -972,7 +972,7 @@ async function handleOfferTracking(event_id, row, block, tx) {
     if (trader === null) {
         await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
     } else {
-        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume']).add(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
     }
 }
 
@@ -988,6 +988,6 @@ async function handleOfferCancelTracking(id, row, block, tx) {
     if (trader === null) {
         await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
     } else {
-        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume']).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
     }
 }
