@@ -197,7 +197,8 @@ CREATE TABLE public."fungibleTrades" (
     "lastUpdatedTimestamp" numeric DEFAULT 0,
     "chainName" text, 
     "maker" text NOT NULL, 
-    "expiry" numeric DEFAULT 0);
+    "expiry" numeric DEFAULT 0,
+    "transactionHash" text);
 ALTER TABLE public."fungibleTrades" OWNER TO postgres;
 
 -- Best way I can think to do this for now - have one of these per chain. otherwise volumes get distorted
