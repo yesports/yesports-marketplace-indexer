@@ -544,7 +544,7 @@ async function handleTradeOpened(row) {
     const tokenNumber = row['returnValues']['tokenId'];
     const maker = row['returnValues']['maker'];
     const tradeFlags = row['returnValues']['tradeFlags'];
-    const tradeType = tradeFlags?.[0] === 0 ? 'BUY' : 'SELL';
+    const tradeType = tradeFlags?.[0] === "0" ? 'BUY' : 'SELL';
     const allowPartialFills = tradeFlags?.[1];
     const isEscrowed = tradeFlags?.[2];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
@@ -559,7 +559,17 @@ async function handleTradeOpened(row) {
             [event_id, tx['from'], "TRADE_OPENED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, id, row['transactionHash']]
         ); 
 
-        //TODO - logic for 1155 trade tracking/scoring
+        //Logic for 1155 trade tracking/scoring
+        let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+        if (trader === null && tradeType === "BUY") {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, price.mul(quantity).toString()])
+        } else if (trader === null && tradeType === "SELL") {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount", "listingVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, price.mul(quantity).toString()])
+        } else if (trader !== null && tradeType === "BUY") {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume']).add(price.mul(quantity)).toString(), tx['from']]);
+        } else if (trader !== null && tradeType === "SELL"){
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) + 1, web3.utils.toBN(trader?.['listingVolume']).add(price.mul(quantity)).toString(), tx['from']]);
+        }
     } catch (e) { console.log(e); }
 
     // CREATE OR GET COLLECTION
@@ -613,7 +623,7 @@ async function handleTradeCancelled(row) {
     const tokenId = `${CA}-${tokenNumber}`;
     const maker = row['returnValues']['maker'];
     const tradeFlags = row['returnValues']['tradeFlags'];
-    const tradeType = tradeFlags?.[0] === 0 ? 'BUY' : 'SELL';
+    const tradeType = tradeFlags?.[0] === "0" ? 'BUY' : 'SELL';
     const allowPartialFills = tradeFlags?.[1];
     const isEscrowed = tradeFlags?.[2];
     const timestamp = row['returnValues']['timestamp'];
@@ -627,7 +637,17 @@ async function handleTradeCancelled(row) {
             [event_id, tx['from'], "TRADE_CANCELLED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, maker, id, row['transactionHash']]
         ); 
 
-        //TODO - logic for 1155 trade tracking/scoring
+        //Logic for 1155 trade tracking/scoring
+        let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+        if (trader === null && tradeType === "BUY") {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
+        } else if (trader === null && tradeType === "SELL") {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "listingCount", "listingVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
+        } else if (trader !== null && tradeType === "BUY") {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume']).sub(price.mul(quantity)).toString(), tx['from']]);
+        } else if (trader !== null && tradeType === "SELL"){
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "listingCount" = $1, "listingVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['listingCount'] ?? 0) - 1, web3.utils.toBN(trader?.['listingVolume']).sub(price.mul(quantity)).toString(), tx['from']]);
+        }
     } catch (e) { console.log(e); }
 
     // CREATE OR GET COLLECTION
@@ -637,12 +657,12 @@ async function handleTradeCancelled(row) {
     }
 
     // SAVE TRADE CANCELLATION
-    const trade = await db.oneOrNone('SELECT * FROM "fungibleTrades" where "id" = $1', [id]);
+    const trade = await db.oneOrNone('SELECT * FROM "fungibleTrades" where "tradeHash" = $1', [id]);
     if (trade === null) { //should be impossible
         await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)', 
         [id, CA, tokenNumber, 'CANCELLED', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), timestamp, timestamp, CHAIN_NAME, maker, expiration.toString()]);
     } else {
-        await db.any('UPDATE "fungibleTrades" SET "status" = $1, "lastUpdatedTimestamp" = $2 WHERE "id" = $3', ['CANCELLED', timestamp, id]);
+        await db.any('UPDATE "fungibleTrades" SET "status" = $1, "lastUpdatedTimestamp" = $2 WHERE "tradeHash" = $3', ['CANCELLED', timestamp, id]);
     }
 
     // SAVE OR UPDATE TOKEN
@@ -656,12 +676,12 @@ async function handleTradeCancelled(row) {
                 [tokenId, tokenNumber, CA, 0, 0, CHAIN_NAME]);
         }
     } else {
-        const [highestBid, lowestAsk] = getFungibleTokenPrices(CA, tokenNumber);
+        const [highestBid, lowestAsk] = await getFungibleTokenPrices(CA, tokenNumber);
         await db.any('UPDATE "tokens" SET "currentAsk" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestAsk, highestBid, tokenId]);
     }
     
     // UPDATE COLLECTION FLOOR/CEILINGS
-    const [floorPrice, ceilingPrice] = getFungibleCollectionPrices(CA);
+    const [floorPrice, ceilingPrice] = await getFungibleCollectionPrices(CA);
     await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
 
     console.log(`[1155 TRADE CANCELLED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}; quantity: ${quantity}`);
@@ -677,7 +697,7 @@ async function handleTradeAccepted(row) {
     const CA = row['returnValues']['token'];
     const tokenNumber = row['returnValues']['tokenId'];
     const tokenId = `${CA}-${tokenNumber}`;
-    const tradeType = row['returnValues']['tradeType'] === 0 ? 'BUY' : 'SELL';
+    const tradeType = row['returnValues']['tradeType'] === "0" ? 'BUY' : 'SELL';
     const timestamp = row['returnValues']['timestamp'];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
@@ -691,7 +711,19 @@ async function handleTradeAccepted(row) {
             [event_id, tx['from'], "TRADE_ACCEPTED", CHAIN_NAME, CA, tokenNumber, price.mul(quantity).toString(), timestamp, id, row['transactionHash']]
         ); 
 
-        //TODO - logic for 1155 trade tracking/scoring
+        //TODO - Logic for 1155 trade tracking/scoring. IMPROVE ME, THIS IS BASIC
+        let traderBuyer = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [buyer]);
+        let traderSeller = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [seller]);
+        if (traderBuyer === null) {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "purchaseCount", "purchaseVolume") VALUES ($1, $2, $3)`, [buyer, 1, price.mul(quantity).toString()]);
+        } else {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["purchaseCount"] ?? 0) + 1, web3.utils.toBN(trade?.["purchaseVolume"]).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+        }
+        if (traderSeller === null) {
+            await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "saleCount", "saleVolume") VALUES ($1, $2, $3)`, [seller, 1, price.mul(quantity).toString()]);
+        } else {
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["saleCount"] ?? 0) + 1, web3.utils.toBN(trade?.["saleVolume"]).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+        }
     } catch (e) { console.log(e); }
 
     try { // wrapping all this just in case 
@@ -701,7 +733,7 @@ async function handleTradeAccepted(row) {
         } else {
             //First, update the fungible trade table with the new status
             const remainingQuantity = web3.utils.toBN(trade?.['remainingQuantity']).sub(quantity);
-            const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? "PARTIAL" : "ACCEPTED";
+            const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? 'PARTIAL' : 'ACCEPTED';
             await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, timestamp, id]);
 
             //Now update the regular fills table with the the amount sold
@@ -716,7 +748,7 @@ async function handleTradeAccepted(row) {
                 if (token === null) {
                     console.log("Token not in database");
                 } else {
-                    const [highestBid, lowestAsk] = getFungibleTokenPrices(CA, tokenNumber);
+                    const [highestBid, lowestAsk] = await getFungibleTokenPrices(CA, tokenNumber);
                     await db.any('UPDATE "tokens" SET "currentAsk" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestAsk, highestBid, tokenId]);
                 }
 
@@ -725,7 +757,7 @@ async function handleTradeAccepted(row) {
                 if (collection === null) {
                     console.log("Collection not in database");
                 } else {
-                    const [floorPrice, ceilingPrice] = getFungibleCollectionPrices(CA);
+                    const [floorPrice, ceilingPrice] = await getFungibleCollectionPrices(CA);
                     await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
                 }
             }
@@ -813,7 +845,7 @@ async function getFungibleTokenPrices(CA, tokenId) {
     let highestBid = null;
     let lowestAsk = null;
 
-    let trades = await db.manyOrNone('SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND "tokenNumber" = $2 AND ("status" = "OPEN" OR "status" = "PARTIAL")', [CA, tokenId]);
+    let trades = await db.manyOrNone(`SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND "tokenNumber" = $2 AND ("status" = 'OPEN' OR "status" = 'PARTIAL')`, [CA, tokenId]);
     if (trades.length > 0) {
         for (let trade of trades) {
             if (trade['tradeType'] === "BUY" && (highestBid === null || (web3.utils.toBN(trade['pricePerUnit'])).gte(web3.utils.toBN(highestBid)))) {
@@ -839,7 +871,7 @@ async function getFungibleCollectionPrices(collectionId) {
     let floorPrice = null;
     let ceilingPrice = null;
 
-    let trades = await db.manyOrNone('SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND ("status" = "OPEN" OR "status" = "PARTIAL") AND "tradeType" = "SELL"', [collectionId]);
+    let trades = await db.manyOrNone(`SELECT * FROM "fungibleTrades" WHERE "contractAddress" = $1 AND ("status" = 'OPEN' OR "status" = 'PARTIAL') AND "tradeType" = 'SELL'`, [collectionId]);
     if (trades.length > 0) {
         for (let trade of trades) {
             if (floorPrice === null || (web3.utils.toBN(trade['pricePerUnit'])).lte(web3.utils.toBN(floorPrice))) {

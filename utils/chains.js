@@ -4,7 +4,7 @@ const CHAINS = {
         "chain_id": 137,
         "rpc": "wss://polygon-mainnet.g.alchemy.com/v2/M8n-tFUkbCemboXyAZbHbTURRTLIKBia",
         "marketplace_contract_address": "0x80D385e56cBF3C1cA27A511A7Eb63a77Dc681484",
-        "fungible_marketplace_contract_address": "0x39a51f7b3166Ea8E94c6FC1D317e24366F9c33A4",
+        "fungible_marketplace_contract_address": "0xDFFc89E4702Da0129a7B16023d13B4A5AB8FB522",
         "testnet": false
     },
     "mumbai": {
