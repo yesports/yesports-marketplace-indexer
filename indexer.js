@@ -732,6 +732,7 @@ async function handleTradeAccepted(row) {
             console.log(`Trade [${id}] not in database`);
         } else {
             //First, update the fungible trade table with the new status
+            console.log(trade);
             const remainingQuantity = web3.utils.toBN(trade?.["remainingQuantity"] ?? 0).sub(quantity);
             const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? 'PARTIAL' : 'ACCEPTED';
             await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, timestamp, id]);
