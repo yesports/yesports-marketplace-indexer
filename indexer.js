@@ -733,7 +733,7 @@ async function handleTradeAccepted(row) {
         } else {
             //First, update the fungible trade table with the new status
             const remainingQuantity = web3.utils.toBN(trade?.[0]?.["remainingQuantity"] ?? 0).sub(quantity);
-            const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? 'PARTIAL' : 'ACCEPTED';
+            const newStatus = remainingQuantity.gt(web3.utils.toBN(0)) ? 'PARTIAL' : 'ACCEPTED';
             await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity.toString(), timestamp, id]);
 
             //Now update the regular fills table with the the amount sold
@@ -762,10 +762,12 @@ async function handleTradeAccepted(row) {
                 }
             }
 
+            console.log(`[1155 TRADE ACCEPTED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price.toString()}; quantity: ${quantity.toString()}`);
         }
     } catch (e) {
         console.log("Error occurred updating/accepting an open trade.", e);
     }
+    
 
 }
 
