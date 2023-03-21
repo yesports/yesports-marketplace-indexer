@@ -758,7 +758,8 @@ async function handleTradeAccepted(row) {
                     console.log("Collection not in database");
                 } else {
                     const [floorPrice, ceilingPrice] = await getFungibleCollectionPrices(CA);
-                    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
+                    const newVolume = web3.utils.toBN(collection['volumeOverall']).add(price.mul(quantity)).toString();
+                    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2, "volumeOverall" = $3 WHERE "id" = $4', [floorPrice, ceilingPrice, newVolume, CA]);
                 }
             }
 
