@@ -717,12 +717,12 @@ async function handleTradeAccepted(row) {
         if (traderBuyer === null) {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "purchaseCount", "purchaseVolume") VALUES ($1, $2, $3)`, [buyer, 1, price.mul(quantity).toString()]);
         } else {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["purchaseCount"] ?? 0) + 1, web3.utils.toBN(trade?.["purchaseVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "purchaseCount" = $1, "purchaseVolume" = $2 WHERE "userAddress" = $3`, [Number(traderBuyer?.["purchaseCount"] ?? 0) + 1, web3.utils.toBN(traderBuyer?.["purchaseVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
         }
         if (traderSeller === null) {
             await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "saleCount", "saleVolume") VALUES ($1, $2, $3)`, [seller, 1, price.mul(quantity).toString()]);
         } else {
-            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(trade?.["saleCount"] ?? 0) + 1, web3.utils.toBN(trade?.["saleVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
+            await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "saleCount" = $1, "saleVolume" = $2 WHERE "userAddress" = $3`, [Number(traderSeller?.["saleCount"] ?? 0) + 1, web3.utils.toBN(traderSeller?.["saleVolume"] ?? 0).add(web3.utils.toBN(price.mul(quantity))).toString(), tx['from']]);
         }
     } catch (e) { console.log(e); }
 
@@ -732,7 +732,7 @@ async function handleTradeAccepted(row) {
             console.log(`Trade [${id}] not in database`);
         } else {
             //First, update the fungible trade table with the new status
-            const remainingQuantity = web3.utils.toBN(trade?.['remainingQuantity']).sub(quantity);
+            const remainingQuantity = web3.utils.toBN(trade?.["remainingQuantity"] ?? 0).sub(quantity);
             const newStatus = remainingQuantity.gte(web3.utils.toBN(0)) ? 'PARTIAL' : 'ACCEPTED';
             await db.any('UPDATE "fungibleTrades" SET "status" = $1, "remainingQuantity" = $2, "lastUpdatedTimestamp" = $3 WHERE "tradeHash" = $4', [newStatus, remainingQuantity, timestamp, id]);
 
