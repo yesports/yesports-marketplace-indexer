@@ -705,7 +705,7 @@ async function handleTradeAccepted(row) {
     let event_id = `${tx['from']}-TRADEACCEPTED-${timestamp}-${row['transactionHash']}`;
     // const quantity = web3.utils.toBN(row['returnValues']['quantity']); // the event returns the wrong value, rip. get it the hard way instead
 
-    const function_inputs = web3.eth.abi.decodeParameters(['bytes32', 'uint256'], tx["input"]);
+    const function_inputs = web3.eth.abi.decodeParameters(['bytes32', 'uint256'], tx["input"].slice(10));
     const quantity = web3.utils.toBN(function_inputs?.[1]);
 
     // For user activity panel
