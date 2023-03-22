@@ -692,8 +692,7 @@ async function handleTradeCancelled(row) {
 async function handleTradeAccepted(row) {
     const id = `${row['returnValues']['tradeId']}`;
     const fillId = `${row['returnValues']['tradeId']}-${row['returnValues']['transactionHash']}`;
-    const price = web3.utils.toBN(row['returnValues']['price']);
-    const quantity = web3.utils.toBN(row['returnValues']['quantity']);
+    const price = web3.utils.toBN(row['returnValues']['price']);    
     const CA = row['returnValues']['token'];
     const tokenNumber = row['returnValues']['tokenId'];
     const tokenId = `${CA}-${tokenNumber}`;
@@ -704,6 +703,10 @@ async function handleTradeAccepted(row) {
     const buyer = row['returnValues']['newOwner'];
     const seller = row['returnValues']['oldOwner'];
     let event_id = `${tx['from']}-TRADEACCEPTED-${timestamp}-${row['transactionHash']}`;
+    // const quantity = web3.utils.toBN(row['returnValues']['quantity']); // the event returns the wrong value, rip. get it the hard way instead
+
+    const function_inputs = web3.eth.abi.decodeParameters(['bytes32', 'uint256'], tx["input"]);
+    const quantity = web3.utils.toBN(function_inputs?.[1]);
 
     // For user activity panel
     if (trackActivity) try { 
