@@ -691,11 +691,11 @@ async function handleTradeCancelled(row) {
 
 async function handleTradeAccepted(row) {
     const id = `${row['returnValues']['tradeId']}`;
-    const fillId = `${row['returnValues']['tradeId']}-${row['returnValues']['transactionHash']}`;
     const price = web3.utils.toBN(row['returnValues']['price']);    
     const CA = row['returnValues']['token'];
     const tokenNumber = row['returnValues']['tokenId'];
     const tokenId = `${CA}-${tokenNumber}`;
+    const fillId = `${tokenId}-${row['transactionHash']}-${id}}}`;
     const tradeType = row['returnValues']['tradeType'] === "0" ? 'BUY' : 'SELL';
     const timestamp = row['returnValues']['timestamp'];
     const expiration = web3.utils.toBN(row['returnValues']['expiry']);
