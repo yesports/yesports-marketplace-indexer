@@ -614,7 +614,7 @@ async function handleTradeOpened(row) {
     //INSERT INTO ASKHISTORIES
     if (tradeType === "SELL") {
         await db.any('INSERT INTO "askHistories" ("collectionId", "tokenNumber", "tokenId", "value", "timestamp", "accepted", "transactionHash", "lister", "chainName", "listingHash", "expiry", "quantity") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-        [askId, tokenNumber, tokenId, price.toString(), timestamp, 0, row['transactionHash'], maker, CHAIN_NAME, id, expiration.toString(), quantity.toString()]
+        [CA, tokenNumber, tokenId, price.toString(), timestamp, 0, row['transactionHash'], maker, CHAIN_NAME, id, expiration.toString(), quantity.toString()]
     );
     }
 
