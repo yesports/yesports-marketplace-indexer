@@ -53,7 +53,7 @@ SET default_tablespace = '';
 SET default_with_oids = false;
 
 CREATE TABLE public."askHistories" (
-    "id" numeric NOT NULL, 
+    "id" numeric UNIQUE NOT NULL, 
     "collectionId" text NOT NULL, 
     "tokenNumber" numeric NOT NULL, 
     "tokenId" text NOT NULL, value numeric NOT NULL, 
@@ -63,7 +63,8 @@ CREATE TABLE public."askHistories" (
     "lister" text, 
     "chainName" text, 
     "listingHash" text, 
-    "expiry" numeric);
+    "expiry" numeric,
+    "quantity" numeric DEFAULT 1 NOT NULL);
 ALTER TABLE public."askHistories" OWNER TO postgres;
 
 CREATE TABLE public.asks (
@@ -110,7 +111,7 @@ CREATE TABLE public.collections (
 ALTER TABLE public.collections OWNER TO postgres;
 
 CREATE TABLE public.fills (
-    "id" text NOT NULL, 
+    "id" text UNIQUE NOT NULL, 
     "collectionId" text NOT NULL, 
     "tokenNumber" numeric NOT NULL, 
     "tokenId" text NOT NULL, 
@@ -203,7 +204,7 @@ ALTER TABLE public."fungibleTrades" OWNER TO postgres;
 
 -- Best way I can think to do this for now - have one of these per chain. otherwise volumes get distorted
 CREATE TABLE public."polygonTraders" (
-    "userAddress" text NOT NULL,
+    "userAddress" text NOT NULL PRIMARY KEY,
     "saleCount" numeric DEFAULT 0,
     "saleVolume" numeric DEFAULT 0,
     "purchaseCount" numeric DEFAULT 0,

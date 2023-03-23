@@ -538,6 +538,7 @@ async function handleTransaction(row) {
 async function handleTradeOpened(row) {
     const id = `${row['returnValues']['tradeId']}`;
     const tokenId = `${row['returnValues']['token']}-${row['returnValues']['tokenId']}`;
+    const askId = `${tokenId}-${row['transactionHash']}-${id}}}`;
     const price = web3.utils.toBN(row['returnValues']['price']);
     const quantity = web3.utils.toBN(row['returnValues']['quantity']);
     const CA = row['returnValues']['token'];
@@ -609,6 +610,13 @@ async function handleTradeOpened(row) {
     await db.any('DELETE FROM "fungibleTrades" WHERE "tradeHash" = $1', [id]);
     await db.any('INSERT INTO "fungibleTrades" ("tradeHash", "contractAddress", "tokenNumber", "status", "tradeType", "allowPartials", "isEscrowed", "totalQuantity", "remainingQuantity", "pricePerUnit", "openedTimestamp", "lastUpdatedTimestamp", "chainName", "maker", "expiry", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)', 
         [id, CA, tokenNumber, 'OPEN', tradeType, allowPartialFills, isEscrowed, quantity.toString(), quantity.toString(), price.toString(), timestamp, timestamp, CHAIN_NAME, maker, expiration.toString(), row['transactionHash']]);
+
+    //INSERT INTO ASKHISTORIES
+    if (tradeType === "SELL") {
+        await db.any('INSERT INTO "askHistories" ("collectionId", "tokenNumber", "tokenId", "value", "timestamp", "accepted", "transactionHash", "lister", "chainName", "listingHash", "expiry", "quantity") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
+        [askId, tokenNumber, tokenId, price.toString(), timestamp, false, row['transactionHash'], maker, CHAIN_NAME, id, expiration.toString(), quantity.toString()]
+    );
+    }
 
     console.log(`[1155 TRADE OPENED] tradeId: ${id}; tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}; quantity: ${quantity}`);
 }
