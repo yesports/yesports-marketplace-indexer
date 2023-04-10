@@ -5,6 +5,18 @@ const CHAINS = {
         "rpc": "wss://polygon-mainnet.g.alchemy.com/v2/M8n-tFUkbCemboXyAZbHbTURRTLIKBia",
         "marketplace_contract_address": "0x80D385e56cBF3C1cA27A511A7Eb63a77Dc681484",
         "fungible_marketplace_contract_address": "0xDFFc89E4702Da0129a7B16023d13B4A5AB8FB522",
+        "startBlock": 39645101,
+        "sleeptime": 3000,
+        "testnet": false
+    },
+    "ethereum": {
+        "chain_name": "Ethereum",
+        "chain_id": 1,
+        "rpc": "wss://eth-mainnet.g.alchemy.com/v2/9YdL81vAxv7Jt9Dk_4QMTw9sWw2RM-Q0",
+        "marketplace_contract_address": "0x89F6467492658E36e9F7812ebFC030C1F96C3D73",
+        "fungible_marketplace_contract_address": "0x72d60c0B0204b8Ee2fA300c225897A5ad001259e",
+        "startBlock": 17013251,
+        "sleeptime": 10000,
         "testnet": false
     },
     "mumbai": {
@@ -17,4 +29,6 @@ const CHAINS = {
     },
 };
 
-module.exports = { CHAINS };
+const CHAIN_LIST = ['polygon', 'ethereum'];
+
+module.exports = { CHAINS, CHAIN_LIST };

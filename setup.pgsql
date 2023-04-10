@@ -97,7 +97,7 @@ CREATE TABLE public.bids (
 ALTER TABLE public.bids OWNER TO postgres;
 
 CREATE TABLE public.collections (
-    "id" text NOT NULL, 
+    "id" text UNIQUE NOT NULL PRIMARY KEY,
     "volumeOverall" numeric DEFAULT 0, 
     "floorPrice" numeric DEFAULT 0, 
     "ceilingPrice" numeric DEFAULT 0, 
@@ -106,6 +106,7 @@ CREATE TABLE public.collections (
     "tradingEnabled" boolean DEFAULT FALSE, 
     "collectionOwner" text, 
     "timestamp" numeric DEFAULT 0 NOT NULL, 
+    "lastModifiedTimestamp" numeric default 0 NOT NULL,
     "lastModifiedTxHash" text, 
     "isERC1155" boolean DEFAULT FALSE NOT NULL);
 ALTER TABLE public.collections OWNER TO postgres;
@@ -141,6 +142,16 @@ CREATE TABLE public.meta (
     "value" text, 
     "timestamp" numeric);
 ALTER TABLE public.meta OWNER TO postgres;
+
+CREATE TABLE public.chains (
+    "name" text NOT NULL UNIQUE PRIMARY KEY,
+    "chainId" numeric NOT NULL UNIQUE,
+    "startBlock" numeric NOT NULL UNIQUE,
+    "lastIndexedBlock" numeric NOT NULL DEFAULT 0,
+    "volume" numeric NOT NULL DEFAULT 0,
+    "trades" numeric NOT NULL DEFAULT 0
+);
+ALTER TABLE public.chains OWNER TO postgres;
 
 CREATE TABLE public.tokens (
     "id" text NOT NULL, 
@@ -178,17 +189,17 @@ ALTER SEQUENCE public."askHistories_id_seq" OWNED BY public."askHistories".id;
 ALTER TABLE ONLY public."askHistories" ALTER COLUMN id SET DEFAULT nextval('public."askHistories_id_seq"'::regclass);
 
 -- 1155's
-CREATE TYPE fungibleTradeStatus AS ENUM ('OPEN', 'PARTIAL', 'ACCEPTED', 'CANCELLED');
-ALTER TYPE fungibleTradeStatus OWNER TO postgres;
-CREATE TYPE fungibleTradeType AS ENUM ('BUY', 'SELL');
-ALTER TYPE fungibleTradeStatus OWNER TO postgres;
+CREATE TYPE public."fungibleTradeStatus" AS ENUM ('OPEN', 'PARTIAL', 'ACCEPTED', 'CANCELLED');
+ALTER TYPE public."fungibleTradeStatus" OWNER TO postgres;
+CREATE TYPE public."fungibleTradeType" AS ENUM ('BUY', 'SELL');
+ALTER TYPE public."fungibleTradeStatus" OWNER TO postgres;
 
 CREATE TABLE public."fungibleTrades" (
     "tradeHash" text NOT NULL, 
     "contractAddress" text NOT NULL, 
     "tokenNumber" numeric NOT NULL, 
-    "status" fungibleTradeStatus NOT NULL, 
-    "tradeType" fungibleTradeType NOT NULL, 
+    "status" public."fungibleTradeStatus" NOT NULL, 
+    "tradeType" public."fungibleTradeType" NOT NULL, 
     "allowPartials" boolean NOT NULL DEFAULT FALSE,
     "isEscrowed" boolean NOT NULL DEFAULT TRUE,
     "totalQuantity" numeric NOT NULL, 

@@ -1,23 +1,35 @@
-const ConnectionFilterPlugin = require("postgraphile-plugin-connection-filter");
+require('dotenv').config()
 const Web3 = require("web3");
 const fs = require("fs").promises;
-const http = require("http");
-const { postgraphile } = require("postgraphile");
+const timers = require('timers/promises');
 const pgp = require("pg-promise")({});
-const cn = 'postgres://postgres:<DBPASS>@<DBHOST>:5432/<DBNAME>?ssl=true';
+const cn = `postgres://${process.env.DBUSER}:${process.env.DBPASS}@${process.env.DBHOST}:5432/${process.env.DBNAME}${process.env.USE_SSL === "true" ? "?ssl=true" : ""}`;
 const db = pgp(cn);
 const ABIS = require("./utils/abis.js");
-const CHAIN_NAME = "polygon";
-const CHAINS = require("./utils/chains.js");
-const chainObject = CHAINS.CHAINS[CHAIN_NAME];
+const { program, Option } = require('commander');
+const { CHAINS, CHAIN_LIST } = require("./utils/chains.js");
 
-const blockBatch = 500;
+/*****************
+    CHAIN SETUP
+******************/
+
+program
+  .version('1.0.0', '-v, --version')
+  .addOption(new Option('-c, --chain <value>', 'chain name ~ should be present in chains.js').choices(CHAIN_LIST))
+  .parse();
+
+const options = program.opts();
+const CHAIN_NAME = options.chain;
+let chainObject = CHAINS[CHAIN_NAME];
+const blockBatch = chainObject?.blockBatch ?? 500;
+
+console.log("Starting Yesports Indexer for " + CHAIN_NAME);
 
 let methodSignatures = [];
 const trackActivity = true;
 
 /*****************
-       SETUP
+    WEB3 SETUP
 ******************/
 
 // Get our web3 provider setup
@@ -56,6 +68,22 @@ ABIS.MARKET.map(function (abi) {
     }
 });
 
+ABIS.MARKET_V11.map(function (abi) {
+    if (abi.name) {
+        const signature = web3.utils.sha3(
+            abi.name +
+            "(" +
+            abi.inputs
+                .map(_typeToString)
+                .join(",") +
+            ")"
+        );
+        if (abi.type !== "event") {
+            methodSignatures[signature.slice(2, 10)] = abi.name;
+        }
+    }
+});
+
 ABIS.FUNGIBLE_MARKET.map(function (abi) {
     if (abi.name) {
         const signature = web3.utils.sha3(
@@ -73,7 +101,8 @@ ABIS.FUNGIBLE_MARKET.map(function (abi) {
 });
 
 // Create requisite contract objects
-const marketPlaceContract = new web3.eth.Contract(ABIS.MARKET, chainObject.marketplace_contract_address);
+const oldMarketplaceContract = new web3.eth.Contract(ABIS.MARKET, chainObject.old_marketplace_contract_address);
+const marketPlaceContract = new web3.eth.Contract(ABIS.MARKET_V11, chainObject.marketplace_contract_address);
 const fungibleMarketPlaceContract = new web3.eth.Contract(ABIS.FUNGIBLE_MARKET, chainObject.fungible_marketplace_contract_address);
 
 /*****************
@@ -82,6 +111,7 @@ const fungibleMarketPlaceContract = new web3.eth.Contract(ABIS.FUNGIBLE_MARKET, 
 startListening();
 
 async function startListening() {
+    chainObject = await setupChain(chainObject);
     startListeningMarketplace();
 }
 
@@ -91,12 +121,12 @@ async function startListening() {
     MARKETPLACE
 ******************/
 async function startListeningMarketplace() {
-    let startBlock = parseInt(await fs.readFile("last_block_polygon.txt"));
+    // let startBlock = parseInt(await fs.readFile(`last_block_${CHAIN_NAME}.txt`));
+    let startBlock = chainObject?.startBlock ?? 0;
 
-    if (startBlock == 0) {
-        startBlock = 40022970;
-    }
-
+    // if (startBlock == 0) {
+    //     startBlock = chainObject?.startBlock ?? 0;
+    // }
     let lastBlock = await web3.eth.getBlockNumber();
 
     let endBlock = startBlock + blockBatch;
@@ -113,10 +143,11 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
         while (true) {
             console.log('Start:', startBlock, 'End:', endBlock, 'Last:', lastBlock);
 
+            let oldEvents = await oldMarketplaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
             let events = await marketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
             let fungiEvents = await fungibleMarketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock});
 
-            let sortedEvents = events.reverse().concat(fungiEvents.reverse()).sort(function (x, y) {
+            let sortedEvents = events.reverse().concat(fungiEvents.reverse()).concat(oldEvents.reverse()).sort(function (x, y) {
                 return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex || x.transactionHash - y.transactionHash;
             });
 
@@ -173,11 +204,11 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
             }
 
             startBlock = endBlock;
-            await fs.writeFile("./last_block_polygon.txt", "" + startBlock);
-            lastBlock = startBlock;
+            // await fs.writeFile(`./last_block_${CHAIN_NAME}.txt`, "" + startBlock);
+            await db.any('UPDATE "chains" SET "lastIndexedBlock" = $1 WHERE "name" = $2', [startBlock, CHAIN_NAME]);
             if (startBlock >= lastBlock) {
                 endBlock = await web3.eth.getBlockNumber();
-                await sleep(10000);
+                await sleep(chainObject?.sleepTime ?? 10000);
             } else {
                 endBlock += blockBatch;
                 if (endBlock > lastBlock) {
@@ -196,9 +227,12 @@ async function handleTokenListed(row) {
     const id = `${row['returnValues']['token']}-${row['returnValues']['id']}`;
     const price = web3.utils.toBN(row['returnValues']['price']);
     const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['id'];
     let block = await web3.eth.getBlock(row['blockNumber']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
     let event_id = `${tx['from']}-TOKENLISTING-${block['timestamp']}-${row['transactionHash']}`;
+    const expiry = web3.utils.toBN(row['returnValues']['expiry'] ?? 0);
+    const listingHash = row['returnValues']['listingHash'] ?? "OLD_CONTRACT";
 
     // For user activity panel
     if (trackActivity) try {
@@ -223,12 +257,12 @@ async function handleTokenListed(row) {
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) {
         await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
-            [id, row['returnValues']['id'], row['returnValues']['token'], price.toString(), 0, 0, CHAIN_NAME]
+            [id, tokenNumber, CA, price.toString(), 0, 0, CHAIN_NAME]
         );
         token = {
             'id': id,
-            'tokenNumber': row['returnValues']['id'],
-            'collectionId': row['returnValues']['token'],
+            'tokenNumber': tokenNumber,
+            'collectionId': CA,
             'currentAsk': price,
             'lowestBid': 0,
             'highestBid': 0
@@ -239,35 +273,38 @@ async function handleTokenListed(row) {
     }
 
     if (web3.utils.toBN(collection['ceilingPrice']).lte(price)) {
-        await db.any('UPDATE "collections" SET "ceilingPrice" = $1 WHERE "id" = $2', [price.toString(), row['returnValues']['token']]);
+        await db.any('UPDATE "collections" SET "ceilingPrice" = $1 WHERE "id" = $2', [price.toString(), CA]);
         collection['ceilingPrice'] = price;
     }
 
     if (web3.utils.toBN(collection['floorPrice']).gte(price)) {
-        await db.any('UPDATE "collections" SET "floorPrice" = $1 WHERE "id" = $2', [price.toString(), row['returnValues']['token']]);
+        await db.any('UPDATE "collections" SET "floorPrice" = $1 WHERE "id" = $2', [price.toString(), CA]);
         collection['floorPrice'] = price;
     }
 
     // SAVE CURRENT ASK
     await db.any('DELETE FROM "asks" WHERE "id" = $1', [id]);
     await db.any('INSERT INTO "asks" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "transactionHash", "lister", "chainName", "listingHash", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-        [id, row['returnValues']['token'], row['returnValues']['id'], id, price.toString(), row['returnValues']['timestamp'], row['transactionHash'], tx['from'], CHAIN_NAME, row['returnValues']['listingHash'], web3.utils.toBN(row['returnValues']['expiry']).toString()]
+        [id, CA, tokenNumber, id, price.toString(), row['returnValues']['timestamp'], row['transactionHash'], tx['from'], CHAIN_NAME, listingHash, expiry.toString()]
     );
 
     // SAVE CURRENT ASK INTO HISTORY
     await db.any('INSERT INTO "askHistories" ("collectionId", "tokenNumber", "tokenId", "value", "timestamp", "accepted", "transactionHash", "lister", "chainName", "listingHash", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-        [row['returnValues']['token'], row['returnValues']['id'], id, price.toString(), row['returnValues']['timestamp'], 0, row['transactionHash'], tx['from'], CHAIN_NAME, row['returnValues']['listingHash'], web3.utils.toBN(row['returnValues']['expiry']).toString()]
+        [CA, tokenNumber, id, price.toString(), row['returnValues']['timestamp'], 0, row['transactionHash'], tx['from'], CHAIN_NAME, listingHash, expiry.toString()]
     );
 
-    console.log(`[TOKEN LISTED] tx: ${row['transactionHash']}; token: ${row['returnValues']['id']}; collection: ${row['returnValues']['token']}}; price: ${price}`);
+    console.log(`[TOKEN LISTED] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}}; price: ${price}`);
 }
 
 
 async function handleTokenDelisted(row) {
     const id = `${row['returnValues']['token']}-${row['returnValues']['id']}`;
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['id'];
     let tx = await web3.eth.getTransaction(row['transactionHash']);
     let block = await web3.eth.getBlock(row['blockNumber']);
     let event_id = `${tx['from']}-TOKENLISTING-${block['timestamp']}-${row['transactionHash']}`;
+    const listingHash = row['returnValues']['listingHash'] ?? "OLD_CONTRACT";
 
     // For user activity panel
     if (trackActivity) try { 
@@ -287,23 +324,29 @@ async function handleTokenDelisted(row) {
 
     // SAVE DELIST TO ASK HISTORY
     await db.any('INSERT INTO "askHistories" ("collectionId", "tokenNumber", "tokenId", "value", "timestamp", "accepted", "transactionHash", "lister", "chainName", "listingHash", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-        [row['returnValues']['token'], row['returnValues']['id'], id, 0, row['returnValues']['timestamp'], 0, row['transactionHash'], tx['from'], CHAIN_NAME, row['returnValues']['listingHash'], 0]
+        [CA, tokenNumber, id, 0, row['returnValues']['timestamp'], 0, row['transactionHash'], tx['from'], CHAIN_NAME, listingHash, 0]
     );
 
     // UPDATE COLLECTION
-    let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
+    let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [CA]);
     if (collection === null) {
         console.log("Collection not in database");
     }
 
-    let [floorPrice, ceilingPrice] = await getCollectionPrices(row['returnValues']['token']);
-    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, row['returnValues']['token']]);
+    let [floorPrice, ceilingPrice] = await getCollectionPrices(CA);
+    await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2 WHERE "id" = $3', [floorPrice, ceilingPrice, CA]);
 
-    console.log(`[TOKEN DELISTED] tx: ${row['transactionHash']}; token: ${row['returnValues']['id']}; collection: ${row['returnValues']['token']};`);
+    console.log(`[TOKEN DELISTED] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA};`);
 }
 
 
 async function handleTokenPurchased(row) {
+    const CA = row['returnValues']['collection'];
+    const tokenNumber = row['returnValues']['tokenId'];
+    const id = `${CA}-${tokenNumber}`;
+    const fillId = `${CA}-${tokenNumber}-${row['transactionHash']}`;
+    const tradeHash = row['returnValues']['tradeHash'] ?? "OLD_CONTRACT";
+    const price = web3.utils.toBN(row['returnValues']['price']);
     let block = await web3.eth.getBlock(row['blockNumber']);
     let tx = await web3.eth.getTransaction(row['transactionHash']);
     row['timestamp'] = block['timestamp'];
@@ -312,8 +355,6 @@ async function handleTokenPurchased(row) {
     let event_id = `${row['returnValues']['newOwner']}-PURCHASEDTOKENFROM-${row['returnValues']['oldOwner']}-${block['timestamp']}-${row['transactionHash']}`;
 
     if (isAcceptedOffer) {
-        const id = `${row['returnValues']['collection']}-${row['returnValues']['id']}`;
-        const fillId = `${row['returnValues']['collection']}-${row['returnValues']['id']}-${row['transactionHash']}`;
 
         // For user activity panel
         if (trackActivity) try { 
@@ -321,10 +362,12 @@ async function handleTokenPurchased(row) {
         } catch (e) { console.log(e); }
 
         // REMOVE CURRENT BID
-        let bid = await db.oneOrNone('SELECT * FROM "bids" WHERE "tokenId" = $1 AND "buyer" = $2 AND "value" = $3 AND "offerHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', [id, row['returnValues']['newOwner'], web3.utils.toBN(row['returnValues']['price']).toString(), row['returnValues']['tradeHash']]);
+        let bid = await db.oneOrNone('SELECT * FROM "bids" WHERE "tokenId" = $1 AND "buyer" = $2 AND "value" = $3 AND "offerHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', 
+            [id, row['returnValues']['newOwner'], price.toString(), tradeHash]);
         if (bid !== null) {
             // SAVE FILL
-            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', [fillId, row['returnValues']['collection'], row['returnValues']['id'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'bid', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner'], row['transactionHash']]);
+            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', 
+                [fillId, CA, tokenNumber, id, price.toString(), block['timestamp'], row['returnValues']['newOwner'], 'bid', CHAIN_NAME, tradeHash, row['returnValues']['oldOwner'], row['transactionHash']]);
 
             // REMOVE BID
             await db.any('DELETE FROM "bids" WHERE "id" = $1', [bid['id']]);
@@ -339,27 +382,37 @@ async function handleTokenPurchased(row) {
             await db.any('UPDATE "tokens" SET "lowestBid" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestBid, highestBid, id]);
 
             // UPDATE COLLECTION
-            let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['collection']]);
+            let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [CA]);
             if (collection === null) {
                 console.log("Collection not in database");
             }
 
-            await db.any('UPDATE "collections" SET "volumeOverall" = $1 WHERE "id" = $2', [((web3.utils.toBN(collection['volumeOverall'])).add(web3.utils.toBN(row['returnValues']['price']))).toString(), row['returnValues']['collection']]);
+            const volumeOverall = web3.utils.toBN(collection['volumeOverall']);
+            await db.any('UPDATE "collections" SET "volumeOverall" = $1 WHERE "id" = $2', [volumeOverall.add(price).toString(), CA]);
 
-            console.log(`[FILL BID] tx: ${row['transactionHash']}; token: ${row['returnValues']['id']}; collection: ${row['returnValues']['collection']}; from: ${row['returnValues']['newOwner']}; price: ${row['returnValues']['price']}`);
+            // UPDATE CHAIN
+            let chain = await db.oneOrNone('SELECT * FROM "chains" where "name" = $1', [CHAIN_NAME]);
+            if (chain === null) {
+                console.log("Chain not in database");
+            } else {
+                const oldVolume = web3.utils.toBN(chain['volume'] ?? "0");
+                const oldTrades = chain['trades'] ?? 0;
+                await db.any('UPDATE "chains" SET "volume" = $1, "trades" = $2 WHERE "name" = $3', [oldVolume.add(price).toString(), Number(oldTrades) + 1, CHAIN_NAME]);
+            }
+
+            console.log(`[FILL BID] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}; from: ${row['returnValues']['newOwner']}; price: ${row['returnValues']['price']}`);
         } else {
             console.log("Bid not in database");
         }
     } else { // Listing fulfilled
-        const id = `${row['returnValues']['collection']}-${row['returnValues']['tokenId']}`;
-        const fillId = `${row['returnValues']['collection']}-${row['returnValues']['tokenId']}-${row['transactionHash']}`;
 
         // For user activity panel
         if (trackActivity) try { 
             await handlePurchaseTracking(event_id, tx, row, block, false);
         } catch (e) { console.log(e); }
 
-        let filledAsk = await db.oneOrNone('SELECT * FROM "askHistories" WHERE "tokenId" = $1 AND "value" = $2 AND "accepted" = $3 AND "listingHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', [id, web3.utils.toBN(row['returnValues']['price']).toString(), 0, row['returnValues']['tradeHash']]);
+        let filledAsk = await db.oneOrNone('SELECT * FROM "askHistories" WHERE "tokenId" = $1 AND "value" = $2 AND "accepted" = $3 AND "listingHash" = $4 ORDER BY "timestamp" DESC LIMIT 1', 
+            [id, price.toString(), 0, tradeHash]);
         if (filledAsk !== null) {
             const askHistoryId = filledAsk['id'];
 
@@ -372,7 +425,8 @@ async function handleTokenPurchased(row) {
             await db.any('UPDATE "tokens" SET "currentAsk" = $1 WHERE "id" = $2', [0, id]);
 
             // SAVE FILL
-            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', [fillId, row['returnValues']['collection'], row['returnValues']['tokenId'], id, web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['newOwner'], 'ask', CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['oldOwner'], row['transactionHash']]);
+            await db.any('INSERT INTO "fills" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "type", "chainName", "tradeHash", "seller", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', 
+                [fillId, CA, tokenNumber, id, price.toString(), block['timestamp'], row['returnValues']['newOwner'], 'ask', CHAIN_NAME, tradeHash, row['returnValues']['oldOwner'], row['transactionHash']]);
 
             // UPDATE OLD ASK HISTORY
             await db.any('UPDATE "askHistories" SET "accepted" = $1 WHERE "id" = $2', [1, askHistoryId]);
@@ -382,19 +436,30 @@ async function handleTokenPurchased(row) {
 
             // SAVE DELIST TO ASK HISTORY
             await db.any('INSERT INTO "askHistories" ("collectionId", "tokenNumber", "tokenId", "value", "timestamp", "accepted", "transactionHash", "lister", "chainName", "listingHash", "expiry") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
-            [row['returnValues']['collection'], row['returnValues']['tokenId'], id, 0, block['timestamp'], 0, row['transactionHash'], row['returnValues']['oldOwner'], CHAIN_NAME, row['returnValues']['tradeHash'], row['returnValues']['expiry']]);
+            [CA, tokenNumber, id, 0, block['timestamp'], 0, row['transactionHash'], row['returnValues']['oldOwner'], CHAIN_NAME, tradeHash, 0]);
             
             // UPDATE COLLECTION
-            let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['collection']]);
+            let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [CA]);
             if (collection === null) {
                 console.log("Collection not in database");
             }
 
-            let [floorPrice, ceilingPrice] = await getCollectionPrices(row['returnValues']['collection']);
-            await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2, "volumeOverall" = $3 WHERE "id" = $4', [floorPrice, ceilingPrice, ((web3.utils.toBN(collection['volumeOverall'])).add(web3.utils.toBN(row['returnValues']['price']))).toString(), row['returnValues']['collection']]);
-            await db.any('UPDATE "collections" SET "volumeOverall" = $1 WHERE "id" = $2', [((web3.utils.toBN(collection['volumeOverall'])).add(web3.utils.toBN(row['returnValues']['price']))).toString(), row['returnValues']['collection']]);
+            let [floorPrice, ceilingPrice] = await getCollectionPrices(CA);
+            const volumeOverall = web3.utils.toBN(collection['volumeOverall']);
+            await db.any('UPDATE "collections" SET "floorPrice" = $1, "ceilingPrice" = $2, "volumeOverall" = $3 WHERE "id" = $4', [floorPrice, ceilingPrice, volumeOverall.add(price).toString(), CA]);
+            await db.any('UPDATE "collections" SET "volumeOverall" = $1 WHERE "id" = $2', [volumeOverall.add(price).toString(), CA]);
 
-            console.log(`[FILL ASK] tx: ${row['transactionHash']}; token: ${row['returnValues']['tokenId']}; collection: ${row['returnValues']['collection']}; price: ${row['returnValues']['price']}`)
+            // UPDATE CHAIN
+            let chain = await db.oneOrNone('SELECT * FROM "chains" where "name" = $1', [CHAIN_NAME]);
+            if (chain === null) {
+                console.log("Chain not in database");
+            } else {
+                const oldVolume = web3.utils.toBN(chain['volume'] ?? "0");
+                const oldTrades = chain['trades'] ?? 0;
+                await db.any('UPDATE "chains" SET "volume" = $1, "trades" = $2 WHERE "name" = $3', [oldVolume.add(price).toString(), Number(oldTrades) + 1, CHAIN_NAME]);
+            }
+
+            console.log(`[FILL ASK] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}; price: ${row['returnValues']['price']}`)
         } else {
             console.log("Ask not in database");
         }
@@ -403,17 +468,35 @@ async function handleTokenPurchased(row) {
 
 
 async function handledBidPlaced(row) {
-    const id = `${row['returnValues']['token']}-${row['returnValues']['id']}`;
-    const bidId = `${row['returnValues']['token']}-${row['returnValues']['id']}-${row['returnValues']['buyer']}-${row['transactionHash']}`;
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['id'];
+    const id = `${CA}-${tokenNumber}`;
+    const bidId = `${CA}-${tokenNumber}-${row['returnValues']['buyer']}-${row['transactionHash']}`;
     const price = web3.utils.toBN(row['returnValues']['price']);
-    let tx = await web3.eth.getTransaction(row['transactionHash']);
+    const expiry = web3.utils.toBN(row['returnValues']['expiry'] ?? 0);
+    const from = row['returnValues']['buyer'];
+    const offerHash = row['returnValues']['offerHash'] ?? "OLD_CONTRACT";
+    let potentialSeller = row['returnValues']['potentialSeller'];
+    if (potentialSeller === undefined) {
+        try {
+            const tokenContract = new web3.eth.Contract(ABIS.NFT, CA);
+            potentialSeller = await tokenContract.methods.ownerOf(tokenNumber).call();
+        } catch (e) {
+            console.log(e);
+        } finally {
+            if (potentialSeller === undefined) {
+                potentialSeller = "UNKNOWN";
+            }
+        }
+    }
     let block = await web3.eth.getBlock(row['blockNumber']);
-    let event_id = `${tx['from']}-OFFERPLACED-${block['timestamp']}-${row['transactionHash']}`;
+    let event_id = `${from}-OFFERPLACED-${block['timestamp']}-${row['transactionHash']}`;
 
     // CREATE OR GET COLLECTION
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
     if (collection === null) {
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, true, false]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            [CA, 0, 0, 0, CHAIN_NAME, true, false]);
         collection = {
             'id': row['returnValues']['token'],
             'ceilingPrice': 0,
@@ -427,11 +510,12 @@ async function handledBidPlaced(row) {
     // SAVE OR UPDATE TOKEN
     let token = await db.oneOrNone('SELECT * FROM "tokens" WHERE "id" = $1', [id]);
     if (token === null) {
-        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', [id, row['returnValues']['id'], row['returnValues']['token'], 0, price.toString(), price.toString(), CHAIN_NAME]);
+        await db.any('INSERT INTO "tokens" ("id", "tokenNumber", "collectionId", "currentAsk", "lowestBid", "highestBid", "chainName") VALUES ($1, $2, $3, $4, $5, $6, $7)', 
+            [id, tokenNumber, CA, 0, price.toString(), price.toString(), CHAIN_NAME]);
         token = {
             'id': id,
-            'tokenNumber': row['returnValues']['id'],
-            'collectionId': row['returnValues']['token'],
+            'tokenNumber': tokenNumber,
+            'collectionId': CA,
             'currentAsk': 0,
             'lowestBid': price,
             'highestBid': price
@@ -450,25 +534,31 @@ async function handledBidPlaced(row) {
 
     // For user activity panel
     if (trackActivity) try { 
-        await handleOfferTracking(event_id, row, block, tx);
+        await handleOfferTracking(event_id, row, block, from);
     } catch (e) { console.log(e); }
 
     // SAVE BID
     await db.any('INSERT INTO "bids" ("id", "collectionId", "tokenNumber", "tokenId", "value", "timestamp", "buyer", "transactionHash", "expiry", "offerHash", "chainName", "seller") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)',
-        [bidId, row['returnValues']['token'], row['returnValues']['id'], id, price.toString(), block['timestamp'], row['returnValues']['buyer'], row['transactionHash'], web3.utils.toBN(row['returnValues']['expiry']).toString(), row['returnValues']['offerHash'], CHAIN_NAME, row['returnValues']['potentialSeller'] ]);
+        [bidId, CA, tokenNumber, id, price.toString(), block['timestamp'], from, row['transactionHash'], expiry.toString(), offerHash, CHAIN_NAME, potentialSeller ]);
 
-    console.log(`[BID PLACED] tx: ${row['transactionHash']}; token: ${row['returnValues']['id']}; collection: ${row['returnValues']['token']}; price: ${price}}`)
+    console.log(`[BID PLACED] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}; price: ${price}}`)
 
 }
 
 
 async function handleBidCancelled(row) {
     let tx = await web3.eth.getTransaction(row['transactionHash']);
+    const offerer = row['returnValues']['buyer'];
     let block = await web3.eth.getBlock(row['blockNumber']);
-    const id = `${row['returnValues']['token']}-${row['returnValues']['id']}`;
+    const CA = row['returnValues']['token'];
+    const tokenNumber = row['returnValues']['id'];
+    const id = `${CA}-${tokenNumber}`;
+    const price = web3.utils.toBN(row['returnValues']['price']);
+    const offerHash = row['returnValues']['offerHash'] ?? "OLD_CONTRACT";
 
     // REMOVE CURRENT BID
-    let bid = await db.oneOrNone('SELECT * FROM "bids" WHERE "tokenId" = $1 AND "buyer" = $2 AND "value" = $3 AND "offerHash" = $4 ORDER BY "timestamp" ASC LIMIT 1', [id, row['returnValues']['buyer'], web3.utils.toBN(row['returnValues']['price']).toString(), row['returnValues']['offerHash']]);
+    let bid = await db.oneOrNone('SELECT * FROM "bids" WHERE "tokenId" = $1 AND "buyer" = $2 AND "value" = $3 AND "offerHash" = $4 ORDER BY "timestamp" ASC LIMIT 1', 
+        [id, offerer, price.toString(), offerHash]);
     if (bid !== null) {
         await db.any('DELETE FROM "bids" WHERE "id" = $1', [bid['id']]);
 
@@ -480,13 +570,13 @@ async function handleBidCancelled(row) {
 
         // For user activity panel
         if (trackActivity) try { 
-            await handleOfferCancelTracking(id, row, block, tx)
+            await handleOfferCancelTracking(id, row, block, offerer)
         } catch (e) { console.log(e); }
 
         let [lowestBid, highestBid] = await getTokenPrices(id);
         await db.any('UPDATE "tokens" SET "lowestBid" = $1, "highestBid" = $2 WHERE "id" = $3', [lowestBid, highestBid, id]);
 
-        console.log(`[BID CANCELLED] tx: ${row['transactionHash']}; token: ${row['returnValues']['id']}; collection: ${row['returnValues']['token']}; from: ${row['returnValues']['buyer']}; price: ${row['returnValues']['price']}`);
+        console.log(`[BID CANCELLED] tx: ${row['transactionHash']}; token: ${tokenNumber}; collection: ${CA}; from: ${offerer}; price: ${row['returnValues']['price']}`);
     } else {
         console.log("Bid not in database");
     }
@@ -499,11 +589,11 @@ async function handleCollectionModified(row) {
 
     let collection = await db.oneOrNone('SELECT * FROM "collections" WHERE "id" = $1', [row['returnValues']['token']]);
     if (collection === null) {
-        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTxHash", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)', 
-            [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash'], isERC1155]);
+        await db.any('INSERT INTO "collections" ("id", "ceilingPrice", "floorPrice", "volumeOverall", "chainName", "tradingEnabled", "royalty", "collectionOwner", "timestamp", "lastModifiedTimestamp", "lastModifiedTxHash", "isERC1155") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)', 
+            [row['returnValues']['token'], 0, 0, 0, CHAIN_NAME, row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['returnValues']['timestamp'], row['transactionHash'], isERC1155]);
             console.log(`Added new collection to database: ${row['returnValues']['token']}.`);
     } else {
-        await db.any('UPDATE "collections" SET "tradingEnabled" = $1, "royalty" = $2, "collectionOwner" = $3, "timestamp" = $4, "lastModifiedTxHash" = $5 WHERE "id" = $6',
+        await db.any('UPDATE "collections" SET "tradingEnabled" = $1, "royalty" = $2, "collectionOwner" = $3, "lastModifiedTimestamp" = $4, "lastModifiedTxHash" = $5 WHERE "id" = $6',
             [row['returnValues']['enabled'], web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString(), row['returnValues']['owner'], row['returnValues']['timestamp'], row['transactionHash'], row['returnValues']['token']]);
             console.log(`Collection updated: ${row['returnValues']['token']}. (${row['returnValues']['enabled'] ? "TRADING" : "NOT TRADING"} | FEE: ${web3.utils.toBN(row['returnValues']['collectionOwnerFee']).toString()} | Collection owner ${row['returnValues']['owner']})`);
     }
@@ -914,7 +1004,7 @@ async function getFungibleCollectionPrices(collectionId) {
 async function handleListingTracking(event_id, tx, row, price, block) {
     //regular tracking
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [event_id, tx['from'], "TOKEN_LISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], price.toString(), block['timestamp'], row['returnValues']['listingHash'], row['transactionHash']]
+        [event_id, tx['from'], "TOKEN_LISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], price.toString(), block['timestamp'], row['returnValues']['listingHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //score tracking
@@ -930,7 +1020,7 @@ async function handleListingTracking(event_id, tx, row, price, block) {
 async function handleDelistingTracking(event_id, tx, row, block) {
     //regular tracking
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [event_id, tx['from'], "TOKEN_DELISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], 0, block['timestamp'], row['returnValues']['listingHash'], row['transactionHash']]
+        [event_id, tx['from'], "TOKEN_DELISTING", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], 0, block['timestamp'], row['returnValues']['listingHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //score tracking
@@ -946,12 +1036,12 @@ async function handleDelistingTracking(event_id, tx, row, block) {
 async function handlePurchaseTracking(event_id, tx, row, block, isOffer) {
     //track purchaser
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [event_id + '-buyer', row['returnValues']['newOwner'], isOffer ? 'TOKEN_PURCHASED_OFFER' : 'TOKEN_PURCHASED_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'], row['transactionHash']]
+        [event_id + '-buyer', row['returnValues']['newOwner'], isOffer ? 'TOKEN_PURCHASED_OFFER' : 'TOKEN_PURCHASED_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //track sale
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [event_id + '-seller', row['returnValues']['oldOwner'], isOffer ? 'TOKEN_SOLD_OFFER' : 'TOKEN_SOLD_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'], row['transactionHash']]
+        [event_id + '-seller', row['returnValues']['oldOwner'], isOffer ? 'TOKEN_SOLD_OFFER' : 'TOKEN_SOLD_LISTING', CHAIN_NAME, row['returnValues']['collection'], row['returnValues']['tokenId'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['tradeHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //score tracking
@@ -975,33 +1065,46 @@ async function handlePurchaseTracking(event_id, tx, row, block, isOffer) {
 }
 
 
-async function handleOfferTracking(event_id, row, block, tx) {
+async function handleOfferTracking(event_id, row, block, from) {
     //regular tracking
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [event_id, tx['from'], "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'], row['transactionHash']]
+        [event_id, from, "OFFER_PLACED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //track score
-    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [from]);
     if (trader === null) {
-        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 1, web3.utils.toBN(row['returnValues']['price']).toString()])
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [from, 1, web3.utils.toBN(row['returnValues']['price']).toString()])
     } else {
-        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) + 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).add(web3.utils.toBN(row['returnValues']['price'])).toString(), from]);
     }
 }
 
 
-async function handleOfferCancelTracking(id, row, block, tx) {
+async function handleOfferCancelTracking(id, row, block, offerer) {
     //regular tracking
     await db.any('INSERT INTO "activityHistories" ("eventId", "userAddress", "activity", "chainName", "tokenAddress", "tokenNumber", "amount", "timestamp", "tradeHash", "transactionHash") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)', 
-        [id, tx['from'], "OFFER_CANCELLED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'], row['transactionHash']]
+        [id, offerer, "OFFER_CANCELLED", CHAIN_NAME, row['returnValues']['token'], row['returnValues']['id'], web3.utils.toBN(row['returnValues']['price']).toString(), block['timestamp'], row['returnValues']['offerHash'] ?? "OLD_CONTRACT", row['transactionHash']]
     ); 
 
     //track score
-    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [tx['from']]);
+    let trader = await db.oneOrNone(`SELECT * FROM "${CHAIN_NAME}Traders" WHERE "userAddress" = $1`, [offerer]);
     if (trader === null) {
-        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [tx['from'], 0, 0])
+        await db.any(`INSERT INTO "${CHAIN_NAME}Traders" ("userAddress", "offerCount", "offerVolume") VALUES ($1, $2, $3)`, [offerer, 0, 0])
     } else {
-        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), tx['from']]);
+        await db.any(`UPDATE "${CHAIN_NAME}Traders" SET "offerCount" = $1, "offerVolume" = $2 WHERE "userAddress" = $3`, [Number(trader?.['offerCount'] ?? 0) - 1, web3.utils.toBN(trader?.['offerVolume'] ?? 0).sub(web3.utils.toBN(row['returnValues']['price'])).toString(), offerer]);
     }
+}
+
+
+async function setupChain(chainObject) {
+    // UPDATE/PULL CHAIN DATA IN DB
+    let chain = await db.oneOrNone('SELECT * FROM "chains" WHERE "name" = $1', [CHAIN_NAME]);
+    if (chain === null) {
+        await db.any('INSERT INTO "chains" ("name", "chainId", "startBlock", "lastIndexedBlock") VALUES ($1, $2, $3, $4)', 
+            [CHAIN_NAME, chainObject?.chain_id, chainObject?.startBlock ?? 0, chainObject?.startBlock ?? 0]);
+    } else {
+        chainObject.startBlock = parseInt(chain['lastIndexedBlock']);
+    }
+    return chainObject;
 }

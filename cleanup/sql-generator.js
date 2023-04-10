@@ -4,9 +4,9 @@ const db = pgp(cn);
 const fs = require("fs").promises;
 const Web3 = require("web3");
 const ABIS = require("../utils/abis.js");
+const { CHAINS, CHAIN_LIST } = require("./utils/chains.js");
 const CHAIN_NAME = "polygon";
-const CHAINS = require("../utils/chains.js");
-const chainObject = CHAINS.CHAINS[CHAIN_NAME];
+const chainObject = CHAINS[CHAIN_NAME];
 
 const providerMATIC = new Web3.providers.WebsocketProvider(chainObject?.rpc, {
         clientConfig: {
