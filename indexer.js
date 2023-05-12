@@ -862,16 +862,17 @@ async function handleTradeAccepted(row) {
     }
 }
 
+
 async function handleWinnerSet(row) {
     const gameId = `${row['returnValues']['gameID']}`;
     const winner = `${row['returnValues']['winner']}`;
     const timestamp = `${row['returnValues']['setTime']}`;
-    const txHash = `${row['returnValues']['transactionHash']}`;
+    const txHash = `${row['transactionHash']}`;
 
     try {
         let game = await db.oneOrNone('SELECT * FROM "nllGames" WHERE "gameId" = $1', [gameId]);
         if (game === null) {
-            await db.any('INSERT INTO "nllGames" ("gameId", "winnerAddress", "timestamp", "transactionHash") VALUES ($1, $2, $3, $4, $5)', [gameId, winner, timestamp, txHash]);
+            await db.any('INSERT INTO "nllGames" ("gameId", "winnerAddress", "timestamp", "transactionHash") VALUES ($1, $2, $3, $4)', [gameId, winner, timestamp, txHash]);
         } else {
             await db.any('UPDATE "nllGames" SET "winnerAddress" = $1, "timestamp" = $2, "transactionHash" = $3 WHERE "gameId" = $4', [winner, timestamp, txHash, gameId]);
         }
