@@ -17,6 +17,7 @@ const CHAINS = {
         "rpc": "wss://eth-mainnet.g.alchemy.com/v2/9YdL81vAxv7Jt9Dk_4QMTw9sWw2RM-Q0",
         "marketplace_contract_address": "0x89F6467492658E36e9F7812ebFC030C1F96C3D73",
         "fungible_marketplace_contract_address": "0x72d60c0B0204b8Ee2fA300c225897A5ad001259e",
+        "nll_contract_address": "0xADfeDac20843530A894a2b92B448c5ff206d0A6F",
         "startBlock": 17013251,
         "sleeptime": 10000,
         "testnet": false

@@ -68,22 +68,6 @@ ABIS.MARKET.map(function (abi) {
     }
 });
 
-ABIS.MARKET_V11.map(function (abi) {
-    if (abi.name) {
-        const signature = web3.utils.sha3(
-            abi.name +
-            "(" +
-            abi.inputs
-                .map(_typeToString)
-                .join(",") +
-            ")"
-        );
-        if (abi.type !== "event") {
-            methodSignatures[signature.slice(2, 10)] = abi.name;
-        }
-    }
-});
-
 ABIS.FUNGIBLE_MARKET.map(function (abi) {
     if (abi.name) {
         const signature = web3.utils.sha3(
@@ -101,9 +85,10 @@ ABIS.FUNGIBLE_MARKET.map(function (abi) {
 });
 
 // Create requisite contract objects
-const oldMarketplaceContract = new web3.eth.Contract(ABIS.MARKET, chainObject.old_marketplace_contract_address);
-const marketPlaceContract = new web3.eth.Contract(ABIS.MARKET_V11, chainObject.marketplace_contract_address);
+const marketPlaceContract = new web3.eth.Contract(ABIS.MARKET, chainObject.marketplace_contract_address);
 const fungibleMarketPlaceContract = new web3.eth.Contract(ABIS.FUNGIBLE_MARKET, chainObject.fungible_marketplace_contract_address);
+// NLL
+const nllContract = chainObject?.chain_name === "Ethereum" ? new web3.eth.Contract(ABIS.NLL, chainObject.nll_contract_address) : null;
 
 /*****************
      ENTRYPOINT
@@ -143,11 +128,14 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
         while (true) {
             console.log('Start:', startBlock, 'End:', endBlock, 'Last:', lastBlock);
 
-            let oldEvents = await oldMarketplaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
+            // let oldEvents = await oldMarketplaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
             let events = await marketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock });
             let fungiEvents = await fungibleMarketPlaceContract.getPastEvents("allEvents", { 'fromBlock': startBlock, 'toBlock': endBlock});
+            let nllEvents = chainObject?.chain_name === "Ethereum" 
+                ? await nllContract.getPastEvents("allEvents", {'fromBlock': startBlock, 'toBlock': endBlock}) 
+                : [];
 
-            let sortedEvents = events.reverse().concat(fungiEvents.reverse()).concat(oldEvents.reverse()).sort(function (x, y) {
+            let sortedEvents = events.reverse().concat(fungiEvents.reverse()).concat(nllEvents.reverse()).sort(function (x, y) {
                 return x.blockNumber - y.blockNumber || x.transactionIndex - y.transactionIndex || x.logIndex - y.logIndex || x.transactionHash - y.transactionHash;
             });
 
@@ -194,6 +182,9 @@ async function handleMarketplaceLogs(startBlock, endBlock, lastBlock) {
                 } else if (row.event == "TradeCancelled") {
                     await handleTradeCancelled(row);
                     row['timestamp'] = row['returnValues']['timestamp'];
+                } else if (row.event == "WinnerSet") {
+                    await handleWinnerSet(row);
+                    row['timestamp'] = row['returnValues']['setTime'];
                 } else {
                     transactionHandled = false;
                 }
@@ -869,10 +860,26 @@ async function handleTradeAccepted(row) {
     } catch (e) {
         console.log("Error occurred updating/accepting an open trade.", e);
     }
-    
-
 }
 
+async function handleWinnerSet(row) {
+    const gameId = `${row['returnValues']['gameID']}`;
+    const winner = `${row['returnValues']['winner']}`;
+    const timestamp = `${row['returnValues']['setTime']}`;
+    const txHash = `${row['returnValues']['transactionHash']}`;
+
+    try {
+        let game = await db.oneOrNone('SELECT * FROM "nllGames" WHERE "gameId" = $1', [gameId]);
+        if (game === null) {
+            await db.any('INSERT INTO "nllGames" ("gameId", "winnerAddress", "timestamp", "transactionHash") VALUES ($1, $2, $3, $4, $5)', [gameId, winner, timestamp, txHash]);
+        } else {
+            await db.any('UPDATE "nllGames" SET "winnerAddress" = $1, "timestamp" = $2, "transactionHash" = $3 WHERE "gameId" = $4', [winner, timestamp, txHash, gameId]);
+        }
+    } catch {
+        console.log(`Failed to index WinnerSet for this game: [${gameId}, ${winner}, ${timestamp}, ${txHash}]`);
+    }
+    
+}
 
 
 /*****************

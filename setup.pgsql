@@ -227,3 +227,12 @@ CREATE TABLE public."polygonTraders" (
     "pure_volume_score" numeric GENERATED ALWAYS AS ("saleVolume" + "purchaseVolume" + "offerVolume") STORED
 );
 ALTER TABLE public."polygonTraders" OWNER TO postgres;
+
+CREATE TABLE public."nllGames" (
+    "gameId" numeric not NULL PRIMARY KEY,
+    "winnerAddress" text NOT NULL,
+    "timestamp" numeric DEFAULT 0,
+    "transactionHash" text NOT NULL
+);
+
+ALTER TABLE public."nllGames" OWNER TO postgres;
